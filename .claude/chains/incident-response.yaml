@@ -1,0 +1,41 @@
+name: incident-response
+description: Debugging and incident investigation chain
+version: "1.0"
+fail_fast: false
+required_pass: any
+
+agents:
+  - name: initial-triage
+    agent: debugger
+    required: true
+    timeout: 300
+    description: Quick diagnosis and root cause hypothesis
+
+  - name: deep-investigation
+    parallel:
+      - name: code-check
+        agent: code-auditor
+        timeout: 300
+        description: Check for code-level issues
+
+      - name: test-check
+        agent: test-validator
+        timeout: 180
+        description: Verify test integrity
+
+    aggregate: any_pass
+    depends_on: initial-triage
+    description: Parallel deep investigation
+
+  - name: resolution
+    agent: debugger
+    required: false
+    timeout: 300
+    depends_on: deep-investigation
+    pass_context: true
+    description: Synthesize findings and propose fix
+
+outputs:
+  root_cause: initial-triage.hypothesis
+  investigation: deep-investigation
+  proposed_fix: resolution.fix

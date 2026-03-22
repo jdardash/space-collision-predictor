@@ -1,0 +1,83 @@
+name: conjunction-pipeline
+description: End-to-end conjunction analysis from TLE ingestion to visualization
+version: "1.0"
+
+triggers:
+  - manual
+  - event: tle_catalog_updated
+
+inputs:
+  - name: hours
+    type: float
+    default: 24.0
+    description: Analysis window in hours
+  - name: threshold_km
+    type: float
+    default: 10.0
+    description: Conjunction threshold in km
+
+steps:
+  - name: tle-check
+    agent: tle-researcher
+    prompt: |
+      Check TLE catalog quality:
+      1. How many satellites are tracked?
+      2. What is the epoch age distribution?
+      3. Flag any TLEs older than 14 days
+      4. Recommend catalog refresh if needed
+    timeout: 120
+    on_failure: continue
+    outputs:
+      - catalog_status
+
+  - name: orbit-validation
+    agent: orbit-analyst
+    prompt: |
+      Validate orbits for all tracked satellites:
+      1. Propagate each to current time
+      2. Verify positions are within expected bounds
+      3. Classify orbit types
+      4. Flag any propagation errors
+    timeout: 300
+    on_failure: continue
+    outputs:
+      - orbit_report
+
+  - name: conjunction-analysis
+    agent: conjunction-predictor
+    depends_on: orbit-validation
+    prompt: |
+      Run conjunction analysis:
+      - Window: {{hours}} hours
+      - Threshold: {{threshold_km}} km
+      1. Coarse screen all pairs
+      2. Refine candidates
+      3. Classify risk levels
+      4. Sort by severity
+    timeout: 600
+    on_failure: abort
+    outputs:
+      - conjunction_events
+      - risk_summary
+
+  - name: visualization
+    agent: viz-developer
+    depends_on: conjunction-analysis
+    prompt: |
+      Generate 3D visualization of results:
+      1. Plot all satellite orbits involved
+      2. Mark conjunction points with TCA data
+      3. Show miss distance vectors
+      4. Export as HTML
+    timeout: 300
+    on_failure: continue
+    outputs:
+      - html_visualization
+
+outputs:
+  - name: events
+    from: conjunction-analysis.conjunction_events
+  - name: report
+    from: conjunction-analysis.risk_summary
+  - name: visualization
+    from: visualization.html_visualization

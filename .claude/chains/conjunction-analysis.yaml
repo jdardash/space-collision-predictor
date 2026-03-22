@@ -1,0 +1,53 @@
+name: conjunction-analysis
+description: End-to-end conjunction analysis with orbit validation and visualization
+version: "1.0"
+fail_fast: false
+required_pass: all
+
+stages:
+  - name: orbit-validation
+    agents:
+      - name: orbit-check
+        agent: orbit-analyst
+        timeout: 180
+        prompt_template: |
+          Validate orbital parameters for all tracked satellites:
+          1. Check TLE epoch freshness
+          2. Verify propagation produces valid positions
+          3. Classify orbit types (LEO/MEO/GEO)
+          4. Flag any degraded TLEs
+        description: Validate orbit data quality
+
+  - name: conjunction-detection
+    depends_on: orbit-validation
+    agents:
+      - name: conjunction-run
+        agent: conjunction-predictor
+        timeout: 300
+        pass_context: true
+        prompt_template: |
+          Run conjunction detection pipeline:
+          1. Coarse screen all satellite pairs
+          2. Refine candidate conjunctions
+          3. Classify risk levels
+          4. Generate sorted report
+        description: Full conjunction detection run
+
+  - name: visualization
+    depends_on: conjunction-detection
+    agents:
+      - name: viz-review
+        agent: viz-developer
+        timeout: 180
+        pass_context: true
+        prompt_template: |
+          Generate 3D visualization of conjunction results:
+          1. Plot all relevant orbits
+          2. Mark conjunction points
+          3. Verify visual accuracy
+        description: Generate conjunction visualization
+
+outputs:
+  orbit_report: orbit-validation.orbit-check.result
+  conjunctions: conjunction-detection.conjunction-run.events
+  visualization: visualization.viz-review.html

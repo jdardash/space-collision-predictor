@@ -1,0 +1,46 @@
+name: daily-scan
+description: Daily automated conjunction scan for all tracked objects
+version: "1.0"
+
+triggers:
+  - schedule: "0 6 * * *"
+  - manual
+
+steps:
+  - name: refresh-catalog
+    agent: data-engineer
+    prompt: |
+      Refresh TLE catalog from CelesTrak:
+      1. Fetch latest station TLEs
+      2. Ingest via TLEStore.load_from_text()
+      3. Report ingestion count
+      4. Flag any parsing failures
+    timeout: 60
+    on_failure: continue
+
+  - name: scan
+    agent: conjunction-predictor
+    depends_on: refresh-catalog
+    prompt: |
+      Run 24-hour conjunction scan:
+      - Threshold: 10 km
+      - Analyze all tracked objects
+      - Report risk distribution
+    timeout: 600
+    on_failure: abort
+
+  - name: alert
+    agent: orbit-analyst
+    depends_on: scan
+    prompt: |
+      Review conjunction results:
+      - Flag any CRITICAL or HIGH risk events
+      - Provide TCA details and miss distances
+      - Recommend follow-up actions
+    timeout: 120
+
+outputs:
+  - name: scan_results
+    from: scan.events
+  - name: alerts
+    from: alert.recommendations

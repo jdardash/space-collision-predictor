@@ -1,0 +1,68 @@
+{
+  "$schema": "https://claude.ai/schemas/hooks.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys, json; data=json.load(sys.stdin); cmd=data.get('tool_input',{}).get('command',''); blocked=['rm -rf /','rm -rf ~','DROP TABLE','DROP DATABASE','TRUNCATE','--force main','--force master','git push --force','git reset --hard origin']; result=next((b for b in blocked if b in cmd), None); print(json.dumps({'hookSpecificOutput':{'permissionDecision':'deny','permissionDecisionReason':f'Blocked dangerous command: {result}'}})) if result else sys.exit(0)\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys, json; data=json.load(sys.stdin); path=data.get('tool_input',{}).get('file_path',''); blocked_paths=['.env', 'credentials', 'secret', '.pem', '.key']; path_match=next((b for b in blocked_paths if b in path.lower()), None); print(json.dumps({'hookSpecificOutput':{'permissionDecision':'deny','permissionDecisionReason':f'Protected path: {path_match}'}})) if path_match else sys.exit(0)\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python .claude/hooks/detect_frame_errors.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json,datetime,os,re;data=json.load(sys.stdin);cmd=data.get('tool_input',{}).get('command','');out=str(data.get('tool_result',{}).get('stdout',''));rc=data.get('tool_result',{}).get('exitCode',0);is_test='pytest' in cmd or 'python -m pytest' in cmd;log_dir='logs';os.makedirs(log_dir,exist_ok=True);ts=datetime.datetime.now().isoformat();lines=[];lines.append(f'{ts} CMD: {cmd[:200]}') if is_test else None;lines.append(f'  EXIT: {rc}') if lines else None;fail_match=re.search(r'(\\d+) failed',out) if is_test else None;pass_match=re.search(r'(\\d+) passed',out) if is_test else None;lines.append(f'  TESTS: {pass_match.group(1) if pass_match else 0} passed, {fail_match.group(1) if fail_match else 0} failed') if is_test and lines else None;open(f'{log_dir}/tool_results.log','a').write('\\n'.join(lines)+'\\n') if lines else None;sys.exit(0)\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys, json, datetime, os; os.makedirs('logs', exist_ok=True); data=json.load(sys.stdin); name=data.get('agent_name','unknown'); ts=datetime.datetime.now().isoformat(); log=f'{ts} START {name}'; open('logs/agent_activity.log','a').write(log+'\\n'); sys.exit(0)\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys, json, datetime, os; os.makedirs('logs', exist_ok=True); data=json.load(sys.stdin); name=data.get('agent_name','unknown'); ts=datetime.datetime.now().isoformat(); log=f'{ts} STOP  {name}'; open('logs/agent_activity.log','a').write(log+'\\n'); sys.exit(0)\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

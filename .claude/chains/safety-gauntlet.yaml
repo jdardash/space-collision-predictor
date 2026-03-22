@@ -1,0 +1,79 @@
+name: safety-gauntlet
+description: Full validation before modifying safety-critical conjunction code
+version: "1.0"
+fail_fast: true
+required_pass: all
+
+stages:
+  # Stage 1: Foundation checks (parallel)
+  - name: foundation
+    parallel:
+      - name: code-audit
+        agent: code-auditor
+        required: true
+        timeout: 300
+        prompt_template: |
+          Audit the conjunction and propagation code for:
+          1. Unit consistency (km, km/s throughout)
+          2. Coordinate frame errors (ECI only)
+          3. SGP4 error handling
+          4. Risk classification boundary correctness
+        description: Check for bugs, unit mismatches, frame errors
+
+      - name: test-validation
+        agent: test-validator
+        required: true
+        timeout: 120
+        prompt_template: |
+          Verify test coverage for:
+          1. All 6 risk classification levels
+          2. Propagation bounds for LEO
+          3. API endpoint integration tests
+          4. Edge cases (empty catalog, single satellite)
+        description: Verify test completeness
+
+    aggregate: all_pass
+    max_stage_time: 360
+
+  # Stage 2: Scenario testing
+  - name: scenario-testing
+    depends_on: foundation
+    agents:
+      - name: conjunction-scenarios
+        agent: conjunction-predictor
+        required: true
+        timeout: 300
+        pass_context: true
+        prompt_template: |
+          Run conjunction analysis scenarios:
+          1. Two LEO satellites in similar orbits
+          2. Known close approach cases
+          3. Edge cases: coplanar orbits, same altitude
+          4. Verify risk classification for each scenario
+        description: Validate conjunction detection accuracy
+
+    max_stage_time: 360
+
+  # Stage 3: Adversarial safety review (must be last)
+  - name: adversarial
+    depends_on: scenario-testing
+    agents:
+      - name: safety-review
+        agent: safety-reviewer
+        required: true
+        timeout: 300
+        pass_context: true
+        description: Final adversarial review - default verdict REJECT
+
+    max_stage_time: 360
+
+outputs:
+  verdict: adversarial.safety-review.verdict
+  issues: adversarial.safety-review.issues
+  code_audit: foundation.code-audit.result
+  test_coverage: foundation.test-validation.result
+  full_report: aggregate_all
+
+sla:
+  target_duration: 600
+  max_duration: 900
