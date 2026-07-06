@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 import httpx
 import numpy as np
@@ -359,6 +361,326 @@ async def proxy_earthquakes():
         })
 
     return {"earthquakes": earthquakes, "count": len(earthquakes)}
+
+
+# ---------------------------------------------------------------------------
+# WorldView proxy endpoints: config, military ADS-B, traffic, CCTV, geocode
+# ---------------------------------------------------------------------------
+
+_KNOTS_TO_M_S = 0.514444
+_FEET_TO_M = 0.3048
+
+#: Road classes requested from Overpass, most important first.
+_TRAFFIC_HIGHWAY_CLASSES = "motorway|trunk|primary|secondary"
+_TRAFFIC_MAX_WAYS = 300
+_TRAFFIC_MAX_SPAN_DEG = 0.5
+
+#: Public open-data CCTV catalogs (image snapshots, no credentials).
+_CCTV_CITIES = ("austin", "nyc", "london")
+_AUSTIN_CAMERAS_URL = (
+    "https://data.austintexas.gov/resource/b4k4-adkb.json?$limit=250"
+)
+_AUSTIN_IMAGE_URL = "https://cctv.austinmobility.io/image/{camera_id}.jpg"
+_NYC_CAMERAS_URL = "https://webcams.nyctmc.org/api/cameras"
+_LONDON_CAMERAS_URL = "https://api.tfl.gov.uk/Place/Type/JamCam"
+
+
+@router.get(
+    "/api/config",
+    tags=["WorldView"],
+    summary="Optional map-provider tokens for the WorldView frontend",
+)
+def worldview_config():
+    """Expose optional map tokens read from environment variables.
+
+    CESIUM_ION_TOKEN enables Cesium World Terrain; GOOGLE_MAPS_API_KEY
+    enables Google Photorealistic 3D Tiles. Both are optional — the globe
+    works without them.
+    """
+    return {
+        "cesium_ion_token": os.environ.get("CESIUM_ION_TOKEN") or None,
+        "google_maps_api_key": os.environ.get("GOOGLE_MAPS_API_KEY") or None,
+    }
+
+
+@router.get(
+    "/api/military-flights",
+    tags=["WorldView"],
+    summary="Live military aircraft from crowdsourced ADS-B (adsb.lol)",
+)
+async def proxy_military_flights():
+    """Proxy military aircraft positions from the adsb.lol /v2/mil feed."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://api.adsb.lol/v2/mil")
+            if resp.status_code != 200:
+                return {"flights": [], "count": 0, "error": "adsb.lol unavailable"}
+            data = resp.json()
+    except Exception:
+        return {"flights": [], "count": 0, "error": "adsb.lol request failed"}
+
+    flights = []
+    for ac in (data.get("ac") or [])[:500]:
+        lat = ac.get("lat")
+        lon = ac.get("lon")
+        if lat is None or lon is None:
+            continue
+        alt_baro = ac.get("alt_baro")
+        alt_m = (
+            round(float(alt_baro) * _FEET_TO_M, 1)
+            if isinstance(alt_baro, (int, float))
+            else 0.0  # "ground" or missing
+        )
+        gs_kt = ac.get("gs")
+        flights.append({
+            "icao24": ac.get("hex", ""),
+            "callsign": (ac.get("flight") or "").strip(),
+            "lat": lat,
+            "lon": lon,
+            "alt_m": alt_m,
+            "type": ac.get("t") or "MIL",
+            "squawk": ac.get("squawk") or "",
+            "velocity": (
+                round(float(gs_kt) * _KNOTS_TO_M_S, 1)
+                if isinstance(gs_kt, (int, float))
+                else None
+            ),
+            "heading": ac.get("track"),
+            "is_military": True,
+        })
+
+    return {"flights": flights, "count": len(flights)}
+
+
+@router.get(
+    "/api/traffic",
+    tags=["WorldView"],
+    summary="Road geometry in a bounding box from OpenStreetMap Overpass",
+)
+async def proxy_traffic(
+    south: float = Query(..., ge=-90.0, le=90.0),
+    west: float = Query(..., ge=-180.0, le=180.0),
+    north: float = Query(..., ge=-90.0, le=90.0),
+    east: float = Query(..., ge=-180.0, le=180.0),
+):
+    """Return major-road polylines inside the bbox for the traffic layer.
+
+    The frontend spawns animated particles along these segments to emulate
+    street traffic. Bbox spans are clamped server-side to keep Overpass
+    queries cheap.
+    """
+    if north <= south or east <= west:
+        raise HTTPException(status_code=422, detail="Empty bounding box")
+    if (north - south) > _TRAFFIC_MAX_SPAN_DEG or (east - west) > _TRAFFIC_MAX_SPAN_DEG:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Bounding box span exceeds {_TRAFFIC_MAX_SPAN_DEG} degrees",
+        )
+
+    overpass_query = (
+        f"[out:json][timeout:10];"
+        f'way["highway"~"^({_TRAFFIC_HIGHWAY_CLASSES})$"]'
+        f"({south},{west},{north},{east});"
+        f"out geom {_TRAFFIC_MAX_WAYS};"
+    )
+    url = "https://overpass-api.de/api/interpreter?data=" + quote(overpass_query)
+    # Overpass rejects generic library User-Agents with HTTP 406
+    headers = {"User-Agent": "sda-collision-predictor/0.2 (worldview traffic layer)"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"roads": [], "count": 0, "error": "Overpass unavailable"}
+            data = resp.json()
+    except Exception:
+        return {"roads": [], "count": 0, "error": "Overpass request failed"}
+
+    roads = []
+    for element in data.get("elements", []):
+        if element.get("type") != "way":
+            continue
+        geometry = element.get("geometry") or []
+        if len(geometry) < 2:
+            continue
+        roads.append({
+            "type": (element.get("tags") or {}).get("highway", "secondary"),
+            "coords": [{"lat": g["lat"], "lon": g["lon"]} for g in geometry],
+        })
+
+    return {"roads": roads, "count": len(roads)}
+
+
+def _parse_austin_cameras(rows: list) -> list[dict]:
+    """Map Austin open-data camera rows to the WorldView camera schema.
+
+    Handles both Socrata location shapes: a GeoJSON-style point in
+    ``location`` and flat ``location_latitude``/``location_longitude``.
+    """
+    cameras = []
+    for row in rows:
+        camera_id = row.get("camera_id")
+        if not camera_id:
+            continue
+        lat = lon = None
+        location = row.get("location")
+        if isinstance(location, dict):
+            coords = location.get("coordinates")
+            if isinstance(coords, list) and len(coords) >= 2:
+                lon, lat = float(coords[0]), float(coords[1])
+            elif location.get("latitude") and location.get("longitude"):
+                lat = float(location["latitude"])
+                lon = float(location["longitude"])
+        if lat is None and row.get("location_latitude"):
+            lat = float(row["location_latitude"])
+            lon = float(row["location_longitude"])
+        if lat is None or lon is None:
+            continue
+        cameras.append({
+            "id": str(camera_id),
+            "name": row.get("location_name", "").strip() or f"CAM {camera_id}",
+            "lat": lat,
+            "lon": lon,
+            "image_url": _AUSTIN_IMAGE_URL.format(camera_id=camera_id),
+            "city": "austin",
+        })
+    return cameras
+
+
+def _parse_nyc_cameras(rows: list) -> list[dict]:
+    """Map NYC TMC camera rows to the WorldView camera schema."""
+    cameras = []
+    for row in rows:
+        cam_id = row.get("id")
+        lat = row.get("latitude")
+        lon = row.get("longitude")
+        if not cam_id or lat is None or lon is None:
+            continue
+        if str(row.get("isOnline", "true")).lower() == "false":
+            continue
+        cameras.append({
+            "id": str(cam_id),
+            "name": row.get("name", "").strip() or f"CAM {cam_id}",
+            "lat": float(lat),
+            "lon": float(lon),
+            "image_url": row.get("imageUrl", ""),
+            "city": "nyc",
+        })
+    return cameras
+
+
+def _parse_london_cameras(rows: list) -> list[dict]:
+    """Map TfL JamCam places to the WorldView camera schema."""
+    cameras = []
+    for row in rows:
+        cam_id = row.get("id")
+        lat = row.get("lat")
+        lon = row.get("lon")
+        if not cam_id or lat is None or lon is None:
+            continue
+        image_url = ""
+        available = True
+        for prop in row.get("additionalProperties") or []:
+            key = prop.get("key")
+            if key == "imageUrl":
+                image_url = prop.get("value") or ""
+            elif key == "available" and str(prop.get("value")).lower() == "false":
+                available = False
+        if not available or not image_url:
+            continue
+        cameras.append({
+            "id": str(cam_id),
+            "name": (row.get("commonName") or "").strip() or f"CAM {cam_id}",
+            "lat": float(lat),
+            "lon": float(lon),
+            "image_url": image_url,
+            "city": "london",
+        })
+    return cameras
+
+
+_CCTV_SOURCES = {
+    "austin": (_AUSTIN_CAMERAS_URL, _parse_austin_cameras),
+    "nyc": (_NYC_CAMERAS_URL, _parse_nyc_cameras),
+    "london": (_LONDON_CAMERAS_URL, _parse_london_cameras),
+}
+
+
+@router.get(
+    "/api/cctv",
+    tags=["WorldView"],
+    summary="Public traffic-camera locations and snapshot URLs",
+)
+async def proxy_cctv(
+    city: str = Query(default="austin", description="One of: austin, nyc, london"),
+):
+    """Proxy public open-data traffic cameras for the CCTV layer.
+
+    Sources: Austin Transportation open data (snapshot images served by
+    cctv.austinmobility.io), NYC TMC webcams, and TfL JamCams. All are
+    public feeds published by the respective city governments.
+    """
+    city = city.lower().strip()
+    if city not in _CCTV_SOURCES:
+        return {
+            "cameras": [],
+            "count": 0,
+            "error": f"Unknown city {city!r}; supported: {', '.join(_CCTV_CITIES)}",
+        }
+
+    url, parser = _CCTV_SOURCES[city]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"cameras": [], "count": 0, "error": "CCTV source unavailable"}
+            data = resp.json()
+    except Exception:
+        return {"cameras": [], "count": 0, "error": "CCTV request failed"}
+
+    rows = data if isinstance(data, list) else []
+    cameras = parser(rows)
+
+    return {"cameras": cameras, "count": len(cameras)}
+
+
+@router.get(
+    "/api/geocode",
+    tags=["WorldView"],
+    summary="Place search via OpenStreetMap Nominatim",
+)
+async def proxy_geocode(
+    q: str = Query(..., min_length=2, max_length=200, description="Free-text place query"),
+):
+    """Proxy place-name search to Nominatim for the WorldView search box."""
+    url = (
+        "https://nominatim.openstreetmap.org/search"
+        "?format=jsonv2&limit=8&q=" + quote(q)
+    )
+    headers = {"User-Agent": "sda-collision-predictor/0.2 (worldview geocoder)"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"results": [], "error": "Nominatim unavailable"}
+            data = resp.json()
+    except Exception:
+        return {"results": [], "error": "Nominatim request failed"}
+
+    results = []
+    for row in data if isinstance(data, list) else []:
+        try:
+            results.append({
+                "name": row.get("display_name", ""),
+                "type": row.get("type") or row.get("category") or "place",
+                "lat": float(row["lat"]),
+                "lon": float(row["lon"]),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    return {"results": results, "count": len(results)}
 
 
 # ---------------------------------------------------------------------------
