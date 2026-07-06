@@ -136,6 +136,51 @@ class MonteCarloResult(BaseModel):
     collision_probability_mc: float
 
 
+class CDMObjectState(BaseModel):
+    """State and covariance for one object in a parsed CDM."""
+    designator: str | None = None
+    name: str | None = None
+    position_km: tuple[float, float, float] | None = None
+    velocity_km_s: tuple[float, float, float] | None = None
+    cov_rtn_km2: list[list[float]] | None = None  # 3x3 position covariance, RTN frame
+
+
+class ParsedCDM(BaseModel):
+    """Fields extracted from a CCSDS 508.0-B-1 Conjunction Data Message."""
+    message_id: str | None = None
+    originator: str | None = None
+    tca: datetime | None = None
+    miss_distance_km: float | None = None
+    relative_speed_km_s: float | None = None
+    relative_position_rtn_km: tuple[float, float, float] | None = None
+    relative_velocity_rtn_km_s: tuple[float, float, float] | None = None
+    stated_collision_probability: float | None = None
+    object1: CDMObjectState = Field(default_factory=CDMObjectState)
+    object2: CDMObjectState = Field(default_factory=CDMObjectState)
+
+
+class CDMPcResult(BaseModel):
+    """Collision probability computed from a parsed CDM's real covariances."""
+    probability_foster: float
+    probability_chan: float
+    miss_distance_km: float
+    mahalanobis_distance: float
+    hard_body_radius_km: float
+    stated_collision_probability: float | None = None
+    frame: str  # "ECI" (per-object states) or "RTN_OBJECT1" (relative state fallback)
+    assumptions: list[str] = Field(default_factory=list)
+
+
+class CDMIngestRequest(BaseModel):
+    cdm_text: str
+    hard_body_radius_km: float = Field(default=0.020, gt=0, le=1.0)
+
+
+class CDMIngestResult(BaseModel):
+    parsed: ParsedCDM
+    pc: CDMPcResult
+
+
 class SatelliteSummary(BaseModel):
     norad_id: int
     name: str

@@ -35,11 +35,13 @@ src/sda/
   models.py        — Pydantic models (TLERecord, StateVector, ConjunctionEvent, RiskLevel)
   propagator.py    — SGP4 wrapper, ECI propagation, vectorized NumPy mode
   conjunction.py   — Two-phase pipeline: coarse screen → fine refinement + risk classification
-  probability.py   — 2D Pc: encounter-plane projection, Bessel I0, TLE-age sigma scaling
+  probability.py   — 2D Pc: encounter-plane projection, Bessel I0, TLE-age sigma scaling,
+                     full-covariance Foster/Chan/Monte-Carlo methods (RTN cov rotation)
+  validation.py    — Cross-method Pc validation suite (python -m sda.validation, CI gate)
   maneuver.py      — Along-track / cross-track / radial avoidance delta-V options
   montecarlo.py    — Gaussian position-noise miss-distance distributions
   decay.py         — Atmospheric decay / lifetime estimation (F10.7-scaled)
-  cdm.py           — CCSDS 508.0-B-1 Conjunction Data Message generation
+  cdm.py           — CCSDS 508.0-B-1 CDM generation + KVN ingestion (Pc from real covariances)
   constants.py     — Shared WGS72 constants (must match sgp4 internals exactly)
   tle_store.py     — In-memory TLE catalog, 2-line/3-line parser, freshness tracking
   visualization.py — Plotly 3D Earth + orbit traces + conjunction markers
@@ -57,7 +59,7 @@ Path-scoped rules in `.claude/rules/` auto-load when editing matching files.
 
 ## API Endpoints
 
-26 REST endpoints + 1 WebSocket across five routers in `src/sda/routes/` — the full
+27 REST endpoints + 1 WebSocket across five routers in `src/sda/routes/` — the full
 table lives in README.md (API Reference section); regenerate it from `app.routes`,
 never by hand. Core set:
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Full-covariance collision probability: Foster 2D quadrature (`pc_foster`), Chan analytic series (`pc_chan`), and 2D Monte Carlo (`pc_monte_carlo_2d`) over real 3x3 position covariances, with RTN-to-ECI covariance rotation and encounter-plane projection (`compute_collision_probability_full`)
+- CCSDS CDM ingestion: KVN parser (`parse_cdm`) honoring CCSDS 508.0-B-1 default units with bracketed-unit overrides, and Pc computed from the message's per-object RTN covariances (`compute_pc_from_cdm`) — CDM support is now two-directional
+- `POST /conjunctions/cdm/ingest` endpoint returning parsed CDM fields plus Foster and Chan Pc, the stated Pc, and any assumptions made
+- Cross-method Pc validation suite (`python -m sda.validation`, non-zero exit on failure): closed form vs. Chan series vs. Foster quadrature vs. Monte Carlo vs. legacy pipeline across 11 isotropic/anisotropic scenarios; max relative error between independent methods 3.7e-6
+- 42 new tests (probability methods, CDM round-trip and ingestion, validation suite)
+
+### Notes
+
+- The Chan series is evaluated in a cancellation-free summation order; the textbook order loses all precision in the deep tail (verified: 33% error at an 8-sigma miss before the reorder)
+- Chan vs. Foster anisotropic disagreement (0.2% at 3:1 aspect, 13% at 10:1) is the documented equivalent-area approximation error; Foster is the primary reported value
+
 ## [0.2.0] - 2026-07-05
 
 ### Added

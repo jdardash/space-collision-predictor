@@ -128,12 +128,13 @@ graph TB
 | ------ | ------- |
 | `propagator.py` | SGP4 wrapper: `(jd, fr)` Julian date handling, ECI propagation, vectorized NumPy mode |
 | `conjunction.py` | Two-phase detection pipeline, risk classification, event history |
-| `probability.py` | 2D Pc: encounter-plane projection, Bessel I0 integration, TLE-age sigma scaling |
+| `probability.py` | 2D Pc: encounter-plane projection, Bessel I0 integration, TLE-age sigma scaling, full-covariance Foster/Chan/Monte-Carlo methods |
+| `validation.py` | Cross-method Pc validation suite (`python -m sda.validation`) |
 | `tle_store.py` | In-memory TLE catalog, 2/3-line parser, freshness tracking |
 | `maneuver.py` | Orbital elements extraction, along/cross/radial delta-V options |
 | `montecarlo.py` | Gaussian position-noise miss-distance distributions |
 | `decay.py` | Atmospheric density model, F10.7 scaling, lifetime estimation |
-| `cdm.py` | CCSDS 508.0-B-1 conjunction data messages |
+| `cdm.py` | CCSDS 508.0-B-1 CDM generation, KVN parsing, and Pc from real covariances |
 | `constants.py` | Shared WGS72 physical constants (matching SGP4 internals) |
 | `visualization.py` | Plotly 3D Earth, orbit traces, screening volumes |
 | `routes/` | FastAPI routers: satellites, conjunctions, analysis, system, worldview |
@@ -145,7 +146,7 @@ graph TB
 
 ## API Reference
 
-26 REST endpoints + 1 WebSocket — auto-generated docs at **/docs** (Swagger UI) and **/redoc**.
+27 REST endpoints + 1 WebSocket — auto-generated docs at **/docs** (Swagger UI) and **/redoc**.
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
@@ -167,6 +168,7 @@ graph TB
 | `DELETE` | `/conjunctions/history` | Clear event history |
 | `GET` | `/conjunctions/visualize` | Interactive 3D Plotly visualization |
 | `POST` | `/conjunctions/cdm` | CCSDS CDM batch generation |
+| `POST` | `/conjunctions/cdm/ingest` | Parse an inbound CCSDS CDM, compute Pc from its real covariances |
 | `POST` | `/maneuver` | Avoidance delta-V planning |
 | `POST` | `/montecarlo` | Miss-distance Monte Carlo simulation |
 | `GET` | `/api/satellite-positions` | WorldView: current positions |
@@ -203,14 +205,26 @@ graph TB
 
 **Covariance model:** TLEs carry no covariance, so an isotropic synthetic sigma is used, scaled with TLE epoch age following Vallado (2013, Ch. 9) — 50 m for a fresh TLE, growing to ~500 m at 3 days. Note the well-known *probability dilution* property of 2D Pc: for very stale data, larger sigma can decrease reported Pc; miss distance and risk level are therefore always reported alongside Pc.
 
+**Full-covariance path:** when real covariances are available — e.g. from an ingested CCSDS CDM (`POST /conjunctions/cdm/ingest`) — Pc is computed from the actual 3x3 per-object RTN covariances instead of the synthetic sigma. Each covariance is rotated to ECI via its object's own state, combined, projected onto the encounter plane, and evaluated with two independent methods that are reported side by side: Foster 2D quadrature (adaptive polar grid) and the Chan analytic series, evaluated in a cancellation-free summation order that stays accurate into the deep tail (Pc ~ 1e-16).
+
 ---
 
 ## Validation & Accuracy
 
 - **Propagation** delegates to [python-sgp4](https://github.com/brandon-rhodes/python-sgp4), which is verified against the official Vallado et al. (2006) reference implementation of SGP4 (agreement to ~0.1 mm). This project pins the **WGS72** gravity model and the `(jd, fr)` split Julian-date convention throughout; shared constants in `constants.py` match `sgp4`'s internal WGS72 values exactly.
 - **Frames:** all positions/velocities are ECI (TEME) in km and km/s. Geodetic conversion (WGS84 ellipsoid) is used only for map display, never in conjunction math.
-- **Pc cross-check:** the `/montecarlo` endpoint provides an independent sampled estimate of collision probability for comparison against the analytic 2D Pc.
-- **Test suite:** 110+ offline-deterministic tests covering LEO propagation bounds, Julian-date roundtrips, all risk-classification branches, Pc bounds and Bessel accuracy, maneuver physics, and every API endpoint via TestClient.
+- **Pc cross-method validation:** every Pc implementation shipped by this package is validated against mathematically independent references by `python -m sda.validation` (also a CI gate — non-zero exit on any failure). Four computation approaches are compared across 11 scenarios spanning isotropic and anisotropic (up to 10:1 aspect, rotated) covariances and miss distances from 0 to 8 sigma: closed-form solutions, the Chan analytic series (exact for isotropic encounters), Foster 2D quadrature, and Monte Carlo sampling. Measured agreement (this release):
+
+  | Comparison | Regime | Max relative error |
+  | ---------- | ------ | ------------------ |
+  | Foster quadrature vs. exact series | isotropic, Pc 1e-1 to 1e-16 | 3.7e-6 |
+  | Legacy pipeline Pc vs. exact series | isotropic | 1.6e-7 |
+  | Foster standard vs. high-resolution grid | anisotropic to 10:1 | 1.6e-6 |
+  | Monte Carlo (4e6 samples) vs. reference | Pc >= 1e-5 | within 5 standard errors |
+  | Chan series vs. Foster | anisotropic (documented approximation) | 0.2% at 3:1, 13% at 10:1 |
+
+  The Chan anisotropic error is the known equivalent-area approximation error and is why Foster is the primary reported value. External comparison against Orekit/CARA Pc classes is the next planned validation tier.
+- **Test suite:** 200+ offline-deterministic tests covering LEO propagation bounds, Julian-date roundtrips, all risk-classification branches, Pc bounds and Bessel accuracy, cross-method Pc agreement, CDM round-trip parsing, maneuver physics, and every API endpoint via TestClient.
 
 ### Benchmark
 

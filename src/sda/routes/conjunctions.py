@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from sda.cdm import generate_cdm_batch
+from sda.cdm import compute_pc_from_cdm, generate_cdm_batch, parse_cdm
 from sda.conjunction import clear_conjunction_history, find_conjunctions, get_conjunction_history
-from sda.models import ConjunctionEvent, ConjunctionRequest
+from sda.models import CDMIngestRequest, CDMIngestResult, ConjunctionEvent, ConjunctionRequest
 from sda.visualization import render_html
 
 router = APIRouter()
@@ -102,3 +102,28 @@ def generate_cdms(request: ConjunctionRequest):
             pc_lookup[(e.primary, e.secondary)] = e.collision_probability.probability
 
     return generate_cdm_batch(events, tle_lookup=tle_lookup, pc_lookup=pc_lookup)
+
+
+@router.post(
+    "/conjunctions/cdm/ingest",
+    response_model=CDMIngestResult,
+    tags=["Conjunctions"],
+    summary="Ingest a CCSDS CDM and compute Pc from its real covariances",
+    response_description=(
+        "Parsed CDM fields plus collision probability computed from the "
+        "message's per-object RTN covariances (Foster and Chan methods)"
+    ),
+)
+def ingest_cdm(request: CDMIngestRequest):
+    """Parse an inbound CCSDS 508.0-B-1 CDM (KVN format) and compute Pc.
+
+    Unlike POST /conjunctions (which derives uncertainty from TLE age),
+    this endpoint consumes the real covariances carried by operational
+    CDMs, closing the loop between CDM generation and ingestion.
+    """
+    try:
+        parsed = parse_cdm(request.cdm_text)
+        pc = compute_pc_from_cdm(parsed, hard_body_radius_km=request.hard_body_radius_km)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return CDMIngestResult(parsed=parsed, pc=pc)

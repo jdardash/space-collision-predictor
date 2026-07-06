@@ -1,8 +1,10 @@
-"""CCSDS Conjunction Data Message (CDM) generator.
+"""CCSDS Conjunction Data Message (CDM) generation and ingestion.
 
 Generates CDM-compliant text output per CCSDS 508.0-B-1 standard,
 the format used by 18th Space Defense Squadron and commercial SSA
-providers for conjunction notification.
+providers for conjunction notification, and parses inbound CDMs
+(KVN format) so collision probability can be computed from the real
+per-object covariances they carry.
 
 Reference: CCSDS 508.0-B-1, "Conjunction Data Message" (June 2013).
 """
@@ -12,7 +14,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from textwrap import dedent
 
-from sda.models import ConjunctionEvent, TLERecord
+import numpy as np
+
+from sda.constants import DEFAULT_POSITION_SIGMA_KM
+from sda.models import CDMObjectState, CDMPcResult, ConjunctionEvent, ParsedCDM, TLERecord
+from sda.probability import compute_collision_probability_full, rtn_covariance_to_eci
 
 
 def generate_cdm(
@@ -110,6 +116,259 @@ def _extract_intl_designator(tle: TLERecord) -> str:
         return tle.line1[9:17].strip()
     except (IndexError, AttributeError):
         return "N/A"
+
+
+# ---------------------------------------------------------------------------
+# CDM ingestion (KVN parsing + Pc from real covariances)
+# ---------------------------------------------------------------------------
+
+# CCSDS 508.0-B-1 default units per keyword, expressed as the factor that
+# converts the standard unit into our internal km / km/s / km**2 convention.
+# An explicit bracketed unit in the message overrides the default.
+_KM_PER_UNIT = {"m": 1e-3, "km": 1.0}
+_KM_S_PER_UNIT = {"m/s": 1e-3, "km/s": 1.0}
+_KM2_PER_UNIT = {"m**2": 1e-6, "km**2": 1.0, "m2": 1e-6, "km2": 1.0}
+
+# keyword -> (default unit table, default unit)
+_UNIT_DEFAULTS: dict[str, tuple[dict[str, float], str]] = {
+    "MISS_DISTANCE": (_KM_PER_UNIT, "m"),
+    "RELATIVE_SPEED": (_KM_S_PER_UNIT, "m/s"),
+    "RELATIVE_POSITION_R": (_KM_PER_UNIT, "m"),
+    "RELATIVE_POSITION_T": (_KM_PER_UNIT, "m"),
+    "RELATIVE_POSITION_N": (_KM_PER_UNIT, "m"),
+    "RELATIVE_VELOCITY_R": (_KM_S_PER_UNIT, "m/s"),
+    "RELATIVE_VELOCITY_T": (_KM_S_PER_UNIT, "m/s"),
+    "RELATIVE_VELOCITY_N": (_KM_S_PER_UNIT, "m/s"),
+    "X": (_KM_PER_UNIT, "km"),
+    "Y": (_KM_PER_UNIT, "km"),
+    "Z": (_KM_PER_UNIT, "km"),
+    "X_DOT": (_KM_S_PER_UNIT, "km/s"),
+    "Y_DOT": (_KM_S_PER_UNIT, "km/s"),
+    "Z_DOT": (_KM_S_PER_UNIT, "km/s"),
+    "CR_R": (_KM2_PER_UNIT, "m**2"),
+    "CT_R": (_KM2_PER_UNIT, "m**2"),
+    "CT_T": (_KM2_PER_UNIT, "m**2"),
+    "CN_R": (_KM2_PER_UNIT, "m**2"),
+    "CN_T": (_KM2_PER_UNIT, "m**2"),
+    "CN_N": (_KM2_PER_UNIT, "m**2"),
+}
+
+# Position covariance lower triangle in RTN order (row, col) per keyword.
+_COV_INDEX = {
+    "CR_R": (0, 0),
+    "CT_R": (1, 0),
+    "CT_T": (1, 1),
+    "CN_R": (2, 0),
+    "CN_T": (2, 1),
+    "CN_N": (2, 2),
+}
+
+
+def _parse_kvn_value(key: str, raw: str) -> float:
+    """Parse a numeric KVN value, honoring an optional bracketed unit."""
+    parts = raw.split("[", 1)
+    number = float(parts[0].strip())
+    table, default_unit = _UNIT_DEFAULTS[key]
+    unit = parts[1].rstrip("]").strip() if len(parts) == 2 else default_unit
+    try:
+        return number * table[unit]
+    except KeyError:
+        raise ValueError(f"Unsupported unit '{unit}' for CDM keyword {key}") from None
+
+
+def _parse_cdm_datetime(raw: str) -> datetime | None:
+    """Parse a CCSDS time string; returns None if unparseable."""
+    try:
+        dt = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def parse_cdm(cdm_text: str) -> ParsedCDM:
+    """Parse a CCSDS 508.0-B-1 Conjunction Data Message in KVN format.
+
+    Extracts relative metadata (TCA, miss distance, relative speed and
+    state, stated Pc) and per-object data (designator, name, ECI state,
+    RTN position covariance). Unknown keywords are ignored; bracketed
+    units are honored with CCSDS defaults otherwise (note: CCSDS states
+    X/Y/Z in km but covariance in m**2).
+    """
+    if "CCSDS_CDM_VERS" not in cdm_text:
+        raise ValueError("Not a CCSDS CDM: missing CCSDS_CDM_VERS")
+
+    parsed = ParsedCDM()
+    scalars: dict[str, float] = {}
+    obj_scalars: list[dict[str, float]] = [{}, {}]
+    obj_meta: list[dict[str, str]] = [{}, {}]
+    obj_cov: list[dict[str, float]] = [{}, {}]
+    section = -1  # -1 = relative metadata; 0/1 = OBJECT1/OBJECT2
+
+    for line in cdm_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("COMMENT") or "=" not in line:
+            continue
+        key, _, raw = line.partition("=")
+        key = key.strip()
+        raw = raw.strip()
+
+        if key == "OBJECT":
+            section = 0 if raw.upper() == "OBJECT1" else 1
+        elif key == "MESSAGE_ID":
+            parsed.message_id = raw
+        elif key == "ORIGINATOR":
+            parsed.originator = raw
+        elif key == "TCA":
+            parsed.tca = _parse_cdm_datetime(raw)
+        elif key == "COLLISION_PROBABILITY":
+            parsed.stated_collision_probability = float(raw.split("[")[0])
+        elif key in ("OBJECT_DESIGNATOR", "OBJECT_NAME") and section >= 0:
+            obj_meta[section]["designator" if key == "OBJECT_DESIGNATOR" else "name"] = raw
+        elif key in _COV_INDEX and section >= 0:
+            obj_cov[section][key] = _parse_kvn_value(key, raw)
+        elif key in _UNIT_DEFAULTS:
+            target = scalars if section < 0 else obj_scalars[section]
+            target[key] = _parse_kvn_value(key, raw)
+
+    parsed.miss_distance_km = scalars.get("MISS_DISTANCE")
+    parsed.relative_speed_km_s = scalars.get("RELATIVE_SPEED")
+
+    rel_pos_keys = ("RELATIVE_POSITION_R", "RELATIVE_POSITION_T", "RELATIVE_POSITION_N")
+    rel_vel_keys = ("RELATIVE_VELOCITY_R", "RELATIVE_VELOCITY_T", "RELATIVE_VELOCITY_N")
+    if all(k in scalars for k in rel_pos_keys):
+        parsed.relative_position_rtn_km = (
+            scalars[rel_pos_keys[0]], scalars[rel_pos_keys[1]], scalars[rel_pos_keys[2]],
+        )
+    if all(k in scalars for k in rel_vel_keys):
+        parsed.relative_velocity_rtn_km_s = (
+            scalars[rel_vel_keys[0]], scalars[rel_vel_keys[1]], scalars[rel_vel_keys[2]],
+        )
+
+    for idx, obj in enumerate((parsed.object1, parsed.object2)):
+        obj.designator = obj_meta[idx].get("designator")
+        obj.name = obj_meta[idx].get("name")
+        vals = obj_scalars[idx]
+        if all(k in vals for k in ("X", "Y", "Z")):
+            obj.position_km = (vals["X"], vals["Y"], vals["Z"])
+        if all(k in vals for k in ("X_DOT", "Y_DOT", "Z_DOT")):
+            obj.velocity_km_s = (vals["X_DOT"], vals["Y_DOT"], vals["Z_DOT"])
+        if obj_cov[idx]:
+            cov = [[0.0] * 3 for _ in range(3)]
+            for kw, (i, j) in _COV_INDEX.items():
+                value = obj_cov[idx].get(kw, 0.0)
+                cov[i][j] = value
+                cov[j][i] = value
+            obj.cov_rtn_km2 = cov
+
+    return parsed
+
+
+def _object_covariance_eci(
+    obj: CDMObjectState,
+    assumptions: list[str],
+    label: str,
+) -> np.ndarray:
+    """Object RTN covariance rotated to ECI, or an isotropic default."""
+    if obj.cov_rtn_km2 is None:
+        assumptions.append(
+            f"{label} carries no covariance; using isotropic default "
+            f"sigma={DEFAULT_POSITION_SIGMA_KM} km"
+        )
+        return np.eye(3) * DEFAULT_POSITION_SIGMA_KM**2
+    cov_rtn = np.asarray(obj.cov_rtn_km2, dtype=float)
+    if obj.position_km is None or obj.velocity_km_s is None:
+        assumptions.append(
+            f"{label} covariance used without frame rotation (no state in CDM)"
+        )
+        return cov_rtn
+    return rtn_covariance_to_eci(
+        cov_rtn, np.asarray(obj.position_km), np.asarray(obj.velocity_km_s)
+    )
+
+
+def compute_pc_from_cdm(
+    parsed: ParsedCDM,
+    hard_body_radius_km: float = 0.020,
+) -> CDMPcResult:
+    """Compute collision probability from a parsed CDM's covariances.
+
+    Preferred path: both objects carry full states, so each RTN covariance
+    is rotated into ECI via its own state and the relative geometry is
+    reconstructed exactly. Fallback path: only the relative state (RTN of
+    object 1) is present, in which case both covariances are treated as
+    expressed in that frame — a documented approximation.
+
+    Raises ValueError when the CDM lacks enough state information.
+    """
+    assumptions: list[str] = [
+        "EME2000/TEME treated as equivalent inertial frames for Pc purposes"
+    ]
+
+    o1, o2 = parsed.object1, parsed.object2
+    have_states = (
+        o1.position_km is not None
+        and o1.velocity_km_s is not None
+        and o2.position_km is not None
+        and o2.velocity_km_s is not None
+    )
+
+    if have_states:
+        frame = "ECI"
+        miss = np.asarray(o1.position_km) - np.asarray(o2.position_km)
+        rel_v = np.asarray(o1.velocity_km_s) - np.asarray(o2.velocity_km_s)
+        cov1 = _object_covariance_eci(o1, assumptions, "OBJECT1")
+        cov2 = _object_covariance_eci(o2, assumptions, "OBJECT2")
+    elif (
+        parsed.relative_position_rtn_km is not None
+        and parsed.relative_velocity_rtn_km_s is not None
+    ):
+        frame = "RTN_OBJECT1"
+        miss = np.asarray(parsed.relative_position_rtn_km)
+        rel_v = np.asarray(parsed.relative_velocity_rtn_km_s)
+        assumptions.append(
+            "No per-object states; both covariances assumed expressed in the "
+            "RTN frame of OBJECT1 (relative-state fallback)"
+        )
+        cov1 = (
+            np.asarray(o1.cov_rtn_km2, dtype=float)
+            if o1.cov_rtn_km2 is not None
+            else np.eye(3) * DEFAULT_POSITION_SIGMA_KM**2
+        )
+        cov2 = (
+            np.asarray(o2.cov_rtn_km2, dtype=float)
+            if o2.cov_rtn_km2 is not None
+            else np.eye(3) * DEFAULT_POSITION_SIGMA_KM**2
+        )
+        if o1.cov_rtn_km2 is None or o2.cov_rtn_km2 is None:
+            assumptions.append(
+                f"Missing covariance replaced by isotropic default "
+                f"sigma={DEFAULT_POSITION_SIGMA_KM} km"
+            )
+    else:
+        raise ValueError(
+            "CDM carries neither per-object states (X/Y/Z, X_DOT/Y_DOT/Z_DOT) "
+            "nor a relative state (RELATIVE_POSITION_*/RELATIVE_VELOCITY_*); "
+            "cannot reconstruct encounter geometry"
+        )
+
+    result = compute_collision_probability_full(
+        miss_vector_km=miss,
+        rel_velocity_km_s=rel_v,
+        cov_primary_eci_km2=cov1,
+        cov_secondary_eci_km2=cov2,
+        combined_radius_km=hard_body_radius_km,
+    )
+
+    return CDMPcResult(
+        probability_foster=result["probability"],
+        probability_chan=result["probability_chan"],
+        miss_distance_km=result["miss_distance_km"],
+        mahalanobis_distance=result["mahalanobis_distance"],
+        hard_body_radius_km=hard_body_radius_km,
+        stated_collision_probability=parsed.stated_collision_probability,
+        frame=frame,
+        assumptions=assumptions,
+    )
 
 
 def generate_cdm_batch(
