@@ -9,7 +9,7 @@ Reference: CCSDS 508.0-B-1, "Conjunction Data Message" (June 2013).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from textwrap import dedent
 
 from sda.models import ConjunctionEvent, TLERecord
@@ -38,7 +38,7 @@ def generate_cdm(
     -------
     CDM-formatted string
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if message_id is None:
         message_id = f"{event.primary}_{event.secondary}_{now.strftime('%Y%m%d%H%M%S')}"
 
@@ -48,8 +48,9 @@ def generate_cdm(
     primary_name = event.primary_name or f"OBJECT {event.primary}"
     secondary_name = event.secondary_name or f"OBJECT {event.secondary}"
 
-    primary_epoch = tle_primary.epoch.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] if tle_primary else "N/A"
-    secondary_epoch = tle_secondary.epoch.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] if tle_secondary else "N/A"
+    epoch_fmt = "%Y-%m-%dT%H:%M:%S.%f"
+    primary_epoch = tle_primary.epoch.strftime(epoch_fmt)[:-3] if tle_primary else "N/A"
+    secondary_epoch = tle_secondary.epoch.strftime(epoch_fmt)[:-3] if tle_secondary else "N/A"
 
     primary_intl = _extract_intl_designator(tle_primary) if tle_primary else "N/A"
     secondary_intl = _extract_intl_designator(tle_secondary) if tle_secondary else "N/A"

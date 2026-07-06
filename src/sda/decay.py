@@ -9,35 +9,10 @@ Reference: King-Hele, "Satellite Orbits in an Atmosphere" (1987).
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
-from dataclasses import dataclass
 
-from sgp4.api import Satrec, WGS72
-
-from sda.models import TLERecord
-
-
-EARTH_RADIUS_KM = 6371.0
-EARTH_MU_KM3_S2 = 398600.4418
-
-
-@dataclass
-class DecayEstimate:
-    """Orbital decay and lifetime estimate."""
-    norad_id: int
-    name: str
-    altitude_km: float
-    perigee_km: float
-    apogee_km: float
-    eccentricity: float
-    period_min: float
-    bstar: float
-    decay_rate_km_per_day: float
-    estimated_lifetime_days: float
-    estimated_lifetime_category: str  # "days", "weeks", "months", "years", "decades", "stable"
-    reentry_risk: str  # "IMMINENT", "HIGH", "MODERATE", "LOW", "MINIMAL"
-    solar_activity_note: str
-
+from sda.constants import EARTH_MU_KM3_S2, EARTH_RADIUS_KM
+from sda.models import DecayEstimate, TLERecord
+from sda.propagator import build_satrec
 
 # Atmospheric density model (simplified exponential, Harris-Priester reference)
 # (base_altitude_km, scale_height_km, density_kg_m3_at_base)
@@ -85,7 +60,7 @@ def _solar_activity_factor(f107: float = 150.0) -> float:
     Density roughly scales 5-10x between min and max at 400 km.
     """
     # Normalize to moderate activity (F10.7 = 150)
-    return (f107 / 150.0) ** 1.5
+    return math.pow(f107 / 150.0, 1.5)
 
 
 def estimate_decay(
@@ -103,7 +78,7 @@ def estimate_decay(
     -------
     DecayEstimate with lifetime prediction
     """
-    sat = Satrec.twoline2rv(tle.line1, tle.line2, WGS72)
+    sat = build_satrec(tle)
 
     # Extract orbital elements
     eccentricity = sat.ecco

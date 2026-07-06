@@ -1,18 +1,16 @@
 """Tests for maneuver planning module."""
 
-import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sda.models import TLERecord, ConjunctionEvent, RiskLevel
-from sda.maneuver import plan_maneuver, compute_along_track_delta_v, ManeuverPlan
-
+from sda.maneuver import ManeuverPlan, compute_along_track_delta_v, plan_maneuver
+from sda.models import ConjunctionEvent, RiskLevel, TLERecord
 
 ISS_TLE = TLERecord(
     norad_id=25544,
     name="ISS (ZARYA)",
     line1="1 25544U 98067A   24045.51782528  .00012516  00000+0  22596-3 0  9997",
     line2="2 25544  51.6412 210.9280 0004885 231.2372 247.0342 15.49584387440014",
-    epoch=datetime(2024, 2, 14, tzinfo=timezone.utc),
+    epoch=datetime(2024, 2, 14, tzinfo=UTC),
 )
 
 CSS_TLE = TLERecord(
@@ -20,7 +18,7 @@ CSS_TLE = TLERecord(
     name="CSS (TIANHE)",
     line1="1 48274U 21035A   24045.52083333  .00020000  00000+0  27000-3 0  9991",
     line2="2 48274  41.4700 100.0000 0007000 280.0000  80.0000 15.60000000100001",
-    epoch=datetime(2024, 2, 14, tzinfo=timezone.utc),
+    epoch=datetime(2024, 2, 14, tzinfo=UTC),
 )
 
 
@@ -59,7 +57,7 @@ def test_plan_maneuver_no_action_needed():
     """No maneuver when miss distance already exceeds target."""
     event = ConjunctionEvent(
         primary=25544, secondary=48274,
-        tca=datetime(2024, 2, 15, 6, 0, tzinfo=timezone.utc),
+        tca=datetime(2024, 2, 15, 6, 0, tzinfo=UTC),
         miss_distance_km=10.0, relative_velocity_km_s=8.0,
         risk=RiskLevel.LOW,
     )
@@ -73,7 +71,7 @@ def test_plan_maneuver_produces_options():
     """Should produce at least one option when miss < target."""
     event = ConjunctionEvent(
         primary=25544, secondary=48274,
-        tca=datetime(2024, 2, 15, 6, 0, tzinfo=timezone.utc),
+        tca=datetime(2024, 2, 15, 6, 0, tzinfo=UTC),
         miss_distance_km=1.0, relative_velocity_km_s=10.0,
         risk=RiskLevel.HIGH,
     )
@@ -86,7 +84,7 @@ def test_plan_maneuver_recommended_is_minimum():
     """Recommended should be the minimum dV option."""
     event = ConjunctionEvent(
         primary=25544, secondary=48274,
-        tca=datetime(2024, 2, 15, 6, 0, tzinfo=timezone.utc),
+        tca=datetime(2024, 2, 15, 6, 0, tzinfo=UTC),
         miss_distance_km=1.0, relative_velocity_km_s=10.0,
         risk=RiskLevel.HIGH,
     )

@@ -9,38 +9,13 @@ Reference: Vallado, "Fundamentals of Astrodynamics and Applications," 4th Ed.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
-from dataclasses import dataclass
+from datetime import timedelta
 
 import numpy as np
-from sgp4.api import Satrec, WGS72
 
-from sda.models import TLERecord, ConjunctionEvent
-from sda.propagator import datetime_to_jd, build_satrec
-
-
-EARTH_MU_KM3_S2 = 398600.4418  # WGS72 gravitational parameter
-
-
-@dataclass
-class ManeuverOption:
-    """A candidate avoidance maneuver."""
-    direction: str  # "along-track", "cross-track", "radial"
-    delta_v_m_s: float  # required impulse magnitude in m/s
-    burn_time: datetime  # recommended burn epoch
-    lead_time_hours: float  # hours before TCA
-    new_miss_distance_km: float  # predicted miss distance after maneuver
-    fuel_mass_kg: float | None = None  # estimated fuel if spacecraft mass known
-
-
-@dataclass
-class ManeuverPlan:
-    """Complete maneuver plan for a conjunction event."""
-    conjunction: ConjunctionEvent
-    target_miss_km: float
-    options: list[ManeuverOption]
-    recommended: ManeuverOption | None
-    warning: str | None = None
+from sda.constants import EARTH_MU_KM3_S2
+from sda.models import ConjunctionEvent, ManeuverOption, ManeuverPlan, TLERecord
+from sda.propagator import build_satrec, datetime_to_jd
 
 
 def _compute_orbital_elements(pos_km: np.ndarray, vel_km_s: np.ndarray) -> dict:
@@ -49,6 +24,9 @@ def _compute_orbital_elements(pos_km: np.ndarray, vel_km_s: np.ndarray) -> dict:
     v = np.linalg.norm(vel_km_s)
     h_vec = np.cross(pos_km, vel_km_s)
     h = np.linalg.norm(h_vec)
+
+    if r < 1e-10 or h < 1e-10:
+        raise ValueError("Degenerate orbit: near-zero radius or angular momentum")
 
     # Semi-major axis (vis-viva)
     energy = v**2 / 2 - EARTH_MU_KM3_S2 / r
@@ -79,6 +57,7 @@ def compute_along_track_delta_v(
     lead_time_hours: float,
     orbital_period_s: float,
     semi_major_axis_km: float,
+    radius_km: float | None = None,
 ) -> float:
     """Compute along-track delta-V to achieve target miss distance.
 
@@ -89,6 +68,7 @@ def compute_along_track_delta_v(
     delta_x ≈ (3/2) * (n * Δt) * (Δv / v) * a
 
     where n = mean motion, Δt = time to TCA, v = orbital velocity.
+    Uses vis-viva equation for eccentric orbits when radius_km is provided.
     """
     deficit_km = target_miss_km - miss_distance_km
     if deficit_km <= 0:
@@ -96,7 +76,10 @@ def compute_along_track_delta_v(
 
     n = 2 * math.pi / orbital_period_s  # mean motion (rad/s)
     dt = lead_time_hours * 3600.0  # seconds to TCA
-    v = math.sqrt(EARTH_MU_KM3_S2 / semi_major_axis_km)  # circular velocity
+
+    # Vis-viva velocity: v = sqrt(mu * (2/r - 1/a))
+    r = radius_km if radius_km is not None else semi_major_axis_km
+    v = math.sqrt(EARTH_MU_KM3_S2 * (2.0 / r - 1.0 / semi_major_axis_km))
 
     # delta_x = 1.5 * n * dt * (dv/v) * a → dv = delta_x * v / (1.5 * n * dt * a)
     denominator = 1.5 * n * dt * semi_major_axis_km
@@ -168,6 +151,7 @@ def plan_maneuver(
             lead_time_hours=lead_hours,
             orbital_period_s=orb["period_s"],
             semi_major_axis_km=orb["a_km"],
+            radius_km=orb["r_km"],
         )
 
         # Estimate new miss distance
@@ -182,13 +166,14 @@ def plan_maneuver(
         ))
 
         # Cross-track maneuver (less efficient, changes orbital plane)
-        # Simple model: Δv_ct ≈ deficit * v / (v * Δt * sin(n*Δt))
+        # Out-of-plane displacement after Δt from an impulse Δv_ct:
+        # d ≈ (Δv_ct / n) * sin(n*Δt)  →  Δv_ct = deficit * n / sin(n*Δt)
         n = 2 * math.pi / orb["period_s"]
         dt = lead_hours * 3600.0
         sin_term = abs(math.sin(n * dt))
         if sin_term > 0.01:
             deficit_km = target_miss_km - event.miss_distance_km
-            dv_cross = (deficit_km / (orb["r_km"] * sin_term)) * 1000.0  # m/s
+            dv_cross = (deficit_km * n / sin_term) * 1000.0  # km/s -> m/s
         else:
             dv_cross = float("inf")
 
@@ -203,7 +188,11 @@ def plan_maneuver(
 
         # Radial maneuver (least efficient in general)
         # Δv_r ≈ 2 * deficit / Δt (impulse approximation)
-        dv_radial = (2 * (target_miss_km - event.miss_distance_km) / dt) * 1000.0 if dt > 0 else float("inf")
+        dv_radial = (
+            (2 * (target_miss_km - event.miss_distance_km) / dt) * 1000.0
+            if dt > 0
+            else float("inf")
+        )
         if math.isfinite(dv_radial):
             options.append(ManeuverOption(
                 direction="radial",

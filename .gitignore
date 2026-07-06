@@ -7,3 +7,11 @@ build/
 venv/
 .env
 *.log
+logs/
+htmlcov/
+.coverage
+coverage.xml
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+preview.html

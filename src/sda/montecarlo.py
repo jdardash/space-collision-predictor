@@ -7,34 +7,13 @@ conjunction risk under uncertainty.
 
 from __future__ import annotations
 
-import math
-from datetime import datetime, timezone
-from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
-from sgp4.api import Satrec, WGS72
 
-from sda.models import TLERecord
-from sda.propagator import datetime_to_jd
-
-
-# Default position uncertainty (1-sigma) in km per axis
-DEFAULT_POSITION_SIGMA_KM = 0.050  # 50 m — typical for LEO with fresh TLEs
-
-
-@dataclass
-class MonteCarloResult:
-    """Results from Monte Carlo miss distance analysis."""
-    mean_miss_km: float
-    std_miss_km: float
-    median_miss_km: float
-    percentile_5_km: float
-    percentile_95_km: float
-    min_miss_km: float
-    max_miss_km: float
-    n_samples: int
-    miss_distances: list[float]
-    collision_probability_mc: float  # fraction of samples below hard-body radius
+from sda.constants import DEFAULT_COMBINED_RADIUS_KM, DEFAULT_POSITION_SIGMA_KM
+from sda.models import MonteCarloResult, TLERecord
+from sda.propagator import build_satrec, datetime_to_jd
 
 
 def run_monte_carlo(
@@ -44,7 +23,8 @@ def run_monte_carlo(
     n_samples: int = 500,
     bstar_sigma_fraction: float = 0.1,
     position_sigma_km: float = DEFAULT_POSITION_SIGMA_KM,
-    hard_body_radius_km: float = 0.020,
+    hard_body_radius_km: float = DEFAULT_COMBINED_RADIUS_KM,
+    seed: int | None = None,
 ) -> MonteCarloResult:
     """Run Monte Carlo analysis of miss distance at TCA.
 
@@ -67,11 +47,10 @@ def run_monte_carlo(
     MonteCarloResult with distribution statistics
     """
     jd, fr = datetime_to_jd(tca)
-    miss_distances = []
     collisions = 0
 
-    sat_p = Satrec.twoline2rv(tle_primary.line1, tle_primary.line2, WGS72)
-    sat_s = Satrec.twoline2rv(tle_secondary.line1, tle_secondary.line2, WGS72)
+    sat_p = build_satrec(tle_primary)
+    sat_s = build_satrec(tle_secondary)
 
     # Get nominal positions at TCA
     err_p, pos_p_nom, _ = sat_p.sgp4(jd, fr)
@@ -98,9 +77,10 @@ def run_monte_carlo(
     # BSTAR uncertainty grows with propagation time; approximate as scaling factor
     total_sigma = position_sigma_km * (1.0 + bstar_sigma_fraction)
 
-    # Generate perturbed positions
-    noise_p = np.random.normal(0, total_sigma, (n_samples, 3))
-    noise_s = np.random.normal(0, total_sigma, (n_samples, 3))
+    # Generate perturbed positions (seeded RNG for reproducibility)
+    rng = np.random.default_rng(seed)
+    noise_p = rng.normal(0, total_sigma, (n_samples, 3))
+    noise_s = rng.normal(0, total_sigma, (n_samples, 3))
 
     positions_p = pos_p_nom + noise_p
     positions_s = pos_s_nom + noise_s
@@ -109,19 +89,17 @@ def run_monte_carlo(
     diffs = positions_p - positions_s
     distances = np.linalg.norm(diffs, axis=1)
 
-    miss_distances = distances.tolist()
     collisions = int(np.sum(distances < hard_body_radius_km))
 
-    arr = np.array(miss_distances)
     return MonteCarloResult(
-        mean_miss_km=float(np.mean(arr)),
-        std_miss_km=float(np.std(arr)),
-        median_miss_km=float(np.median(arr)),
-        percentile_5_km=float(np.percentile(arr, 5)),
-        percentile_95_km=float(np.percentile(arr, 95)),
-        min_miss_km=float(np.min(arr)),
-        max_miss_km=float(np.max(arr)),
-        n_samples=len(miss_distances),
-        miss_distances=sorted(miss_distances),
-        collision_probability_mc=collisions / len(miss_distances),
+        mean_miss_km=float(np.mean(distances)),
+        std_miss_km=float(np.std(distances)),
+        median_miss_km=float(np.median(distances)),
+        percentile_5_km=float(np.percentile(distances, 5)),
+        percentile_95_km=float(np.percentile(distances, 95)),
+        min_miss_km=float(np.min(distances)),
+        max_miss_km=float(np.max(distances)),
+        n_samples=len(distances),
+        miss_distances=sorted(distances.tolist()),
+        collision_probability_mc=collisions / len(distances),
     )

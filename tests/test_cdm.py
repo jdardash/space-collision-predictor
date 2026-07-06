@@ -1,17 +1,16 @@
 """Tests for CCSDS CDM generation."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sda.cdm import generate_cdm, generate_cdm_batch, _extract_intl_designator
+from sda.cdm import _extract_intl_designator, generate_cdm, generate_cdm_batch
 from sda.models import ConjunctionEvent, RiskLevel, TLERecord
-
 
 ISS_TLE = TLERecord(
     norad_id=25544,
     name="ISS (ZARYA)",
     line1="1 25544U 98067A   24045.51782528  .00012516  00000+0  22596-3 0  9997",
     line2="2 25544  51.6412 210.9280 0004885 231.2372 247.0342 15.49584387440014",
-    epoch=datetime(2024, 2, 14, tzinfo=timezone.utc),
+    epoch=datetime(2024, 2, 14, tzinfo=UTC),
 )
 
 SAMPLE_EVENT = ConjunctionEvent(
@@ -19,7 +18,7 @@ SAMPLE_EVENT = ConjunctionEvent(
     secondary=48274,
     primary_name="ISS (ZARYA)",
     secondary_name="CSS (TIANHE)",
-    tca=datetime(2024, 2, 15, 6, 30, 0, tzinfo=timezone.utc),
+    tca=datetime(2024, 2, 15, 6, 30, 0, tzinfo=UTC),
     miss_distance_km=2.5,
     relative_velocity_km_s=8.3,
     risk=RiskLevel.MODERATE,

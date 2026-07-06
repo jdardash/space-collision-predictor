@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
-from sgp4.api import Satrec, WGS72, jday
+from sgp4.api import WGS72, Satrec, jday
 
-from sda.models import TLERecord, StateVector
+from sda.models import StateVector, TLERecord
 
 
 def build_satrec(tle: TLERecord) -> Satrec:
@@ -19,7 +19,7 @@ def build_satrec(tle: TLERecord) -> Satrec:
 def datetime_to_jd(dt: datetime) -> tuple[float, float]:
     """Convert a datetime to Julian date pair (jd, fr)."""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     jd, fr = jday(
         dt.year, dt.month, dt.day,
         dt.hour, dt.minute,
@@ -32,7 +32,7 @@ def jd_to_datetime(jd: float, fr: float = 0.0) -> datetime:
     """Convert Julian date pair back to UTC datetime."""
     total_jd = jd + fr
     # J2000.0 = 2451545.0 = 2000-01-01T12:00:00Z
-    j2000_epoch = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    j2000_epoch = datetime(2000, 1, 1, 12, 0, 0, tzinfo=UTC)
     delta_days = total_jd - 2451545.0
     return j2000_epoch + timedelta(days=delta_days)
 
@@ -96,26 +96,20 @@ def propagate_window_numpy(
         jds[i] = jd
         frs[i] = fr
 
-    positions = np.zeros((n_steps, 3))
-    velocities = np.zeros((n_steps, 3))
-    valid = np.ones(n_steps, dtype=bool)
+    # Vectorized SGP4 propagation
+    errors, positions, velocities = satrec.sgp4_array(jds, frs)
+    valid = errors == 0
 
-    for i in range(n_steps):
-        error, pos, vel = satrec.sgp4(jds[i], frs[i])
-        if error != 0:
-            valid[i] = False
-            continue
-        positions[i] = pos
-        velocities[i] = vel
-
-    return positions[valid], velocities[valid], [t for t, v in zip(times, valid) if v]
+    # times and valid both have n_steps entries by construction
+    valid_times = [t for t, v in zip(times, valid, strict=True) if v]
+    return positions[valid], velocities[valid], valid_times
 
 
 def compute_distance(pos1: tuple[float, ...], pos2: tuple[float, ...]) -> float:
     """Euclidean distance in km between two position vectors."""
-    return math.sqrt(sum((a - b) ** 2 for a, b in zip(pos1, pos2)))
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(pos1, pos2, strict=True)))
 
 
 def compute_relative_velocity(vel1: tuple[float, ...], vel2: tuple[float, ...]) -> float:
     """Magnitude of velocity difference in km/s."""
-    return math.sqrt(sum((a - b) ** 2 for a, b in zip(vel1, vel2)))
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(vel1, vel2, strict=True)))

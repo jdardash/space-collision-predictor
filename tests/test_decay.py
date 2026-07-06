@@ -1,17 +1,16 @@
 """Tests for atmospheric drag decay estimation."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from sda.decay import DecayEstimate, _atmospheric_density, estimate_decay
 from sda.models import TLERecord
-from sda.decay import estimate_decay, DecayEstimate, _atmospheric_density
-
 
 ISS_TLE = TLERecord(
     norad_id=25544,
     name="ISS (ZARYA)",
     line1="1 25544U 98067A   24045.51782528  .00012516  00000+0  22596-3 0  9997",
     line2="2 25544  51.6412 210.9280 0004885 231.2372 247.0342 15.49584387440014",
-    epoch=datetime(2024, 2, 14, tzinfo=timezone.utc),
+    epoch=datetime(2024, 2, 14, tzinfo=UTC),
 )
 
 

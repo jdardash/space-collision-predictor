@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Space-Domain Awareness Collision Predictor"
+abstract: "Satellite conjunction analysis engine with SGP4 propagation, collision probability computation, and interactive 3D visualization."
+authors:
+  - family-names: Dardash
+    given-names: J.
+    email: jsdardashti@gmail.com
+version: 0.2.0
+date-released: "2026-07-05"
+license: MIT
+repository-code: "https://github.com/jdardash/space-collision-predictor"
+keywords:
+  - satellite
+  - conjunction
+  - sgp4
+  - orbital-mechanics
+  - space-domain-awareness
+  - collision-probability

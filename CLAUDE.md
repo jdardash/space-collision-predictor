@@ -35,13 +35,20 @@ src/sda/
   models.py        — Pydantic models (TLERecord, StateVector, ConjunctionEvent, RiskLevel)
   propagator.py    — SGP4 wrapper, ECI propagation, vectorized NumPy mode
   conjunction.py   — Two-phase pipeline: coarse screen → fine refinement + risk classification
-  tle_store.py     — In-memory TLE catalog, 2-line/3-line parser
+  probability.py   — 2D Pc: encounter-plane projection, Bessel I0, TLE-age sigma scaling
+  maneuver.py      — Along-track / cross-track / radial avoidance delta-V options
+  montecarlo.py    — Gaussian position-noise miss-distance distributions
+  decay.py         — Atmospheric decay / lifetime estimation (F10.7-scaled)
+  cdm.py           — CCSDS 508.0-B-1 Conjunction Data Message generation
+  constants.py     — Shared WGS72 constants (must match sgp4 internals exactly)
+  tle_store.py     — In-memory TLE catalog, 2-line/3-line parser, freshness tracking
   visualization.py — Plotly 3D Earth + orbit traces + conjunction markers
-  api.py           — FastAPI service, CelesTrak seed, 7 endpoints
-tests/
-  test_propagator.py  — SGP4 engine tests (ISS LEO bounds, JD roundtrip)
-  test_conjunction.py — Risk classification + pipeline smoke tests
-  test_api.py         — FastAPI endpoint integration tests
+  api.py           — App assembly, lifespan, CelesTrak/NOAA background tasks, run()
+  routes/          — FastAPI routers: satellites, conjunctions, analysis, system, worldview
+  templates/       — dashboard.html, worldview.html (served as static HTML)
+  demo_tles.py     — Bundled offline demo catalog (instant startup / CelesTrak fallback)
+tests/                — 110+ offline-deterministic tests (see README Testing table)
+  test_safety_invariants.py — classify_risk boundary locks + Pc dilution regression
 .claude/              — AI orchestration (10 agents, 11 commands, 3 chains, prompts, hooks)
 docs/handoffs/        — Session handoff files
 ```
@@ -50,15 +57,20 @@ Path-scoped rules in `.claude/rules/` auto-load when editing matching files.
 
 ## API Endpoints
 
+26 REST endpoints + 1 WebSocket across five routers in `src/sda/routes/` — the full
+table lives in README.md (API Reference section); regenerate it from `app.routes`,
+never by hand. Core set:
+
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/health` | Health check + satellite count |
 | `GET` | `/satellites` | List tracked satellites |
-| `GET` | `/satellites/{norad_id}` | Detail + current state vector |
-| `POST` | `/tle` | Ingest TLE text (body: `{"tle_text": "..."}`) |
-| `DELETE` | `/satellites/{norad_id}` | Remove from tracking |
-| `POST` | `/conjunctions` | Run analysis (body: `ConjunctionRequest`) |
-| `GET` | `/conjunctions/visualize` | Interactive 3D Plotly HTML |
+| `GET` | `/satellites/{norad_id}` | Detail + current state vector (also `DELETE`) |
+| `POST` | `/tle` | Ingest TLE text (plus `/tle/freshness`, `/tle/stale`, `/tle/refresh`) |
+| `POST` | `/conjunctions` | Run analysis (plus `/history`, `/visualize`, `/cdm`) |
+| `POST` | `/maneuver`, `/montecarlo` | Avoidance planning, MC miss-distance analysis |
+| `GET` | `/satellites/{norad_id}/decay` | Orbital lifetime estimate |
+| `WS` | `/ws/positions` | Real-time position stream (worldview router also serves `/api/*` globe data) |
 
 ## Risk Classification (conjunction.py)
 

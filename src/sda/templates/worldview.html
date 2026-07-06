@@ -1,0 +1,2717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WorldView — SDA Intelligence Dashboard</title>
+<script>window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/';</script>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/Cesium.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<style>
+  /* ===== RESET & BASE ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    color: #ffb000;
+    font-size: 12px;
+  }
+
+  /* ===== CESIUM CONTAINER ===== */
+  #cesiumContainer {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    z-index: 0;
+  }
+  #cesiumContainer canvas { display: block; }
+  .cesium-viewer-bottom { display: none !important; }
+  .cesium-widget-credits { display: none !important; }
+
+  /* ===== VIEW MODE FILTERS ===== */
+  body.mode-crt #cesiumContainer canvas {
+    filter: sepia(100%) hue-rotate(70deg) saturate(400%) brightness(0.7) contrast(1.1);
+  }
+  body.mode-crt { --hud-color: #00ff41; --hud-dim: #007a1f; --hud-glow: rgba(0,255,65,0.3); }
+
+  body.mode-nvg #cesiumContainer canvas {
+    filter: sepia(100%) hue-rotate(70deg) saturate(500%) brightness(1.2) contrast(1.4);
+  }
+  body.mode-nvg { --hud-color: #39ff14; --hud-dim: #1a7a0a; --hud-glow: rgba(57,255,20,0.4); }
+
+  body.mode-flir #cesiumContainer canvas {
+    filter: saturate(150%) hue-rotate(190deg) brightness(0.85) contrast(1.4);
+  }
+  body.mode-flir { --hud-color: #ff6600; --hud-dim: #993d00; --hud-glow: rgba(255,102,0,0.3); }
+
+  body.mode-normal { --hud-color: #ffb000; --hud-dim: #7a5500; --hud-glow: rgba(255,176,0,0.2); }
+
+  /* ===== FILTER OVERLAYS ===== */
+  .filter-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 1;
+  }
+  #scanlines {
+    display: none;
+    background: repeating-linear-gradient(
+      0deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px
+    );
+    opacity: 0.6;
+  }
+  body.mode-crt #scanlines { display: block; }
+  #vignette {
+    display: none;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.7) 100%);
+  }
+  body.mode-crt #vignette, body.mode-nvg #vignette { display: block; }
+  #noise-overlay {
+    display: none; opacity: 0.04;
+    animation: noiseAnim 0.1s steps(8) infinite;
+  }
+  body.mode-nvg #noise-overlay { display: block; }
+  @keyframes noiseAnim {
+    0%   { background-position: 0 0; }
+    50%  { background-position: 50% -50%; }
+    100% { background-position: -50% 50%; }
+  }
+  #flir-overlay {
+    display: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(255,60,0,0.08) 100%);
+  }
+  body.mode-flir #flir-overlay { display: block; }
+
+  /* ===== HUD ELEMENTS ===== */
+  .hud {
+    position: fixed; z-index: 10;
+    color: var(--hud-color, #ffb000);
+    text-shadow: 0 0 6px var(--hud-glow, rgba(255,176,0,0.2));
+  }
+  .hud-interactive { pointer-events: auto; }
+
+  /* ===== TOP HEADER BAR ===== */
+  #header {
+    top: 0; left: 0; width: 100%; height: 42px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
+    border-bottom: 1px solid rgba(255,176,0,0.15);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; font-size: 11px;
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo {
+    font-size: 16px; font-weight: 700; letter-spacing: 4px;
+    background: linear-gradient(90deg, var(--hud-color, #ffb000), #ff6600);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .classification {
+    font-size: 9px; letter-spacing: 2px; color: var(--hud-dim, #7a5500);
+    border: 1px solid var(--hud-dim, #7a5500); padding: 2px 8px; text-transform: uppercase;
+  }
+  .header-center { font-size: 13px; font-weight: 600; letter-spacing: 2px; }
+  .header-right { display: flex; gap: 16px; font-size: 10px; letter-spacing: 1px; }
+  .header-right .stat { opacity: 0.8; }
+
+  /* ===== LEFT CONTROL PANEL ===== */
+  #controls {
+    top: 52px; left: 10px; width: 240px;
+    max-height: calc(100vh - 100px); overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: rgba(255,176,0,0.3) transparent;
+  }
+  .panel {
+    background: rgba(0,0,0,0.75); border: 1px solid rgba(255,176,0,0.12);
+    border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; backdrop-filter: blur(8px);
+  }
+  .panel h3 {
+    font-size: 9px; letter-spacing: 3px; font-weight: 600; color: var(--hud-dim, #7a5500);
+    margin-bottom: 8px; text-transform: uppercase;
+    border-bottom: 1px solid rgba(255,176,0,0.08); padding-bottom: 4px;
+    cursor: pointer; user-select: none;
+  }
+  .panel.collapsed .panel-body { display: none; }
+  .mode-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .mode-btn {
+    background: rgba(255,176,0,0.05); border: 1px solid rgba(255,176,0,0.15);
+    color: var(--hud-color, #ffb000); padding: 6px 0; font-size: 10px; font-weight: 600;
+    letter-spacing: 1px; cursor: pointer; font-family: inherit; border-radius: 2px; transition: all 0.2s;
+  }
+  .mode-btn:hover { background: rgba(255,176,0,0.12); border-color: rgba(255,176,0,0.4); }
+  .mode-btn.active {
+    background: rgba(255,176,0,0.2); border-color: var(--hud-color, #ffb000);
+    box-shadow: 0 0 8px var(--hud-glow, rgba(255,176,0,0.2));
+  }
+  .layer-toggle {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 0; cursor: pointer; font-size: 11px; transition: opacity 0.2s;
+  }
+  .layer-toggle:hover { opacity: 1; }
+  .layer-toggle input[type="checkbox"] { accent-color: var(--hud-color, #ffb000); width: 12px; height: 12px; }
+  .layer-toggle .count { margin-left: auto; font-size: 9px; color: var(--hud-dim, #7a5500); }
+  .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+  .preset-btn {
+    background: rgba(255,176,0,0.04); border: 1px solid rgba(255,176,0,0.1);
+    color: var(--hud-color, #ffb000); padding: 5px 4px; font-size: 9px;
+    cursor: pointer; font-family: inherit; border-radius: 2px; transition: all 0.2s; letter-spacing: 0.5px;
+  }
+  .preset-btn:hover { background: rgba(255,176,0,0.12); border-color: rgba(255,176,0,0.4); }
+  .btn-action {
+    width: 100%;
+    background: linear-gradient(135deg, rgba(255,176,0,0.15), rgba(255,100,0,0.15));
+    border: 1px solid rgba(255,176,0,0.3); color: var(--hud-color, #ffb000);
+    padding: 8px; font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    cursor: pointer; font-family: inherit; border-radius: 2px; transition: all 0.2s;
+  }
+  .btn-action:hover {
+    background: linear-gradient(135deg, rgba(255,176,0,0.25), rgba(255,100,0,0.25));
+    box-shadow: 0 0 12px var(--hud-glow, rgba(255,176,0,0.2));
+  }
+  .conj-item { padding: 6px 0; border-bottom: 1px solid rgba(255,176,0,0.06); font-size: 10px; }
+  .risk-tag {
+    display: inline-block; padding: 1px 5px; border-radius: 2px;
+    font-size: 8px; font-weight: 700; letter-spacing: 1px;
+  }
+  .risk-CRITICAL { background: rgba(255,0,0,0.25); color: #ff4040; border: 1px solid rgba(255,0,0,0.4); }
+  .risk-HIGH { background: rgba(255,120,0,0.2); color: #ff8800; border: 1px solid rgba(255,120,0,0.3); }
+  .risk-MODERATE { background: rgba(255,200,0,0.15); color: #ffc800; border: 1px solid rgba(255,200,0,0.3); }
+  .risk-LOW { background: rgba(0,200,0,0.1); color: #00cc44; border: 1px solid rgba(0,200,0,0.2); }
+  .risk-NEGLIGIBLE { background: rgba(100,100,100,0.1); color: #888; border: 1px solid rgba(100,100,100,0.2); }
+
+  /* ===== SLIDERS ===== */
+  .slider-row {
+    display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 10px;
+  }
+  .slider-row label { flex: 0 0 70px; font-size: 9px; color: var(--hud-dim); letter-spacing: 1px; }
+  .slider-row input[type="range"] {
+    flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+    background: rgba(255,176,0,0.15); border-radius: 2px; outline: none;
+  }
+  .slider-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--hud-color, #ffb000); cursor: pointer;
+  }
+  .slider-row .val { flex: 0 0 30px; text-align: right; font-size: 9px; font-weight: 600; }
+
+  /* ===== SEARCH BOX ===== */
+  #search-box {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 100; width: 500px;
+    background: rgba(0,0,0,0.92); border: 1px solid var(--hud-color, #ffb000);
+    border-radius: 6px; padding: 0; backdrop-filter: blur(12px);
+    box-shadow: 0 0 40px rgba(255,176,0,0.15);
+  }
+  #search-box.visible { display: block; }
+  #search-input {
+    width: 100%; background: transparent; border: none; border-bottom: 1px solid rgba(255,176,0,0.15);
+    color: var(--hud-color, #ffb000); padding: 16px 20px; font-size: 16px;
+    font-family: inherit; outline: none; letter-spacing: 1px;
+  }
+  #search-input::placeholder { color: var(--hud-dim, #7a5500); }
+  #search-results {
+    max-height: 300px; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: rgba(255,176,0,0.3) transparent;
+  }
+  .search-result {
+    padding: 10px 20px; cursor: pointer; font-size: 12px; border-bottom: 1px solid rgba(255,176,0,0.06);
+    transition: background 0.15s;
+  }
+  .search-result:hover { background: rgba(255,176,0,0.1); }
+  .search-result .sr-name { font-weight: 600; }
+  .search-result .sr-type { font-size: 9px; color: var(--hud-dim); margin-left: 8px; letter-spacing: 1px; }
+  .search-result .sr-full { font-size: 9px; color: var(--hud-dim); display: block; margin-top: 2px; }
+
+  /* ===== CCTV PANEL ===== */
+  #cctv-viewer {
+    display: none; position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 50; width: 480px; height: 320px;
+    background: rgba(0,0,0,0.9); border: 1px solid var(--hud-color, #ffb000);
+    border-radius: 4px; overflow: hidden;
+  }
+  #cctv-viewer.visible { display: block; }
+  #cctv-viewer .cctv-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 12px; background: rgba(0,0,0,0.6);
+    border-bottom: 1px solid rgba(255,176,0,0.15);
+    font-size: 10px; letter-spacing: 2px;
+  }
+  #cctv-viewer .cctv-close {
+    background: none; border: 1px solid rgba(255,176,0,0.3); color: var(--hud-color);
+    padding: 2px 8px; cursor: pointer; font-family: inherit; font-size: 9px;
+    border-radius: 2px;
+  }
+  #cctv-viewer img {
+    width: 100%; height: calc(100% - 32px); object-fit: contain; background: #111;
+  }
+
+  /* ===== RIGHT INFO PANEL ===== */
+  #info-panel {
+    top: 52px; right: 10px; width: 280px;
+    background: rgba(0,0,0,0.8); border: 1px solid rgba(255,176,0,0.15);
+    border-radius: 4px; padding: 12px; backdrop-filter: blur(8px);
+    transition: transform 0.3s, opacity 0.3s;
+  }
+  #info-panel.hidden { transform: translateX(300px); opacity: 0; pointer-events: none; }
+  #info-panel h3 {
+    font-size: 9px; letter-spacing: 3px; color: var(--hud-dim, #7a5500);
+    margin-bottom: 8px; text-transform: uppercase;
+  }
+  .info-row {
+    display: flex; justify-content: space-between; padding: 3px 0;
+    font-size: 10px; border-bottom: 1px solid rgba(255,176,0,0.05);
+  }
+  .info-label { color: var(--hud-dim, #7a5500); }
+  .info-value { font-weight: 600; }
+  .btn-dismiss {
+    margin-top: 8px; width: 100%; background: none; border: 1px solid rgba(255,176,0,0.15);
+    color: var(--hud-dim, #7a5500); padding: 5px; font-size: 9px;
+    cursor: pointer; font-family: inherit; letter-spacing: 2px; border-radius: 2px;
+  }
+  .btn-dismiss:hover { border-color: var(--hud-color, #ffb000); color: var(--hud-color, #ffb000); }
+
+  /* ===== DETECTION MODE ===== */
+  body.detection-mode #crosshair { opacity: 0.8; }
+  body.detection-mode #crosshair .ch-h, body.detection-mode #crosshair .ch-v {
+    background: #ff4040; box-shadow: 0 0 4px rgba(255,64,64,0.5);
+  }
+  #detection-badge {
+    display: none; position: fixed; top: 48px; left: 50%; transform: translateX(-50%);
+    z-index: 20; background: rgba(255,0,0,0.15); border: 1px solid rgba(255,0,0,0.4);
+    color: #ff4040; padding: 4px 16px; font-size: 10px; font-weight: 700;
+    letter-spacing: 3px; border-radius: 2px;
+    animation: detectionPulse 2s infinite;
+  }
+  body.detection-mode #detection-badge { display: block; }
+  @keyframes detectionPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  /* ===== BOTTOM STATUS BAR ===== */
+  #status-bar {
+    bottom: 0; left: 0; width: 100%; height: 28px;
+    background: linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
+    border-top: 1px solid rgba(255,176,0,0.1);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; font-size: 10px; letter-spacing: 1px; color: var(--hud-dim, #7a5500);
+  }
+  #status-bar span { min-width: 100px; }
+  #status-bar .right { text-align: right; }
+
+  /* ===== CROSSHAIR ===== */
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 40px; height: 40px; z-index: 5; pointer-events: none; opacity: 0.3;
+  }
+  #crosshair .ch-h, #crosshair .ch-v { position: absolute; background: var(--hud-color, #ffb000); }
+  #crosshair .ch-h { width: 100%; height: 1px; top: 50%; left: 0; }
+  #crosshair .ch-v { width: 1px; height: 100%; top: 0; left: 50%; }
+
+  /* ===== INTEL FEED ===== */
+  #intel-feed {
+    bottom: 38px; right: 10px; width: 300px; max-height: 200px; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: rgba(255,176,0,0.2) transparent;
+  }
+  .feed-item {
+    background: rgba(0,0,0,0.7); border: 1px solid rgba(255,176,0,0.08);
+    border-radius: 2px; padding: 6px 8px; margin-bottom: 3px;
+    font-size: 9px; line-height: 1.4; backdrop-filter: blur(4px);
+    animation: feedSlide 0.3s ease-out;
+  }
+  .feed-time { color: var(--hud-dim, #7a5500); font-size: 8px; }
+  @keyframes feedSlide {
+    from { transform: translateX(20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  /* ===== KEYBOARD HELP ===== */
+  #keyboard-help {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 100; width: 440px; max-height: 80vh; overflow-y: auto;
+    background: rgba(0,0,0,0.94); border: 1px solid var(--hud-color, #ffb000);
+    border-radius: 6px; padding: 24px; backdrop-filter: blur(12px);
+  }
+  #keyboard-help.visible { display: block; }
+  #keyboard-help h2 {
+    font-size: 12px; letter-spacing: 4px; color: var(--hud-color);
+    margin-bottom: 16px; border-bottom: 1px solid rgba(255,176,0,0.15); padding-bottom: 8px;
+  }
+  .key-group { margin-bottom: 14px; }
+  .key-group h4 { font-size: 9px; color: var(--hud-dim); letter-spacing: 2px; margin-bottom: 6px; }
+  .key-row {
+    display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 11px;
+  }
+  .key-row kbd {
+    display: inline-block; min-width: 28px; text-align: center;
+    background: rgba(255,176,0,0.1); border: 1px solid rgba(255,176,0,0.3);
+    border-radius: 3px; padding: 2px 6px; font-size: 10px; font-family: inherit;
+    color: var(--hud-color);
+  }
+  .key-row span { color: var(--hud-dim); }
+
+  /* ===== LOADING OVERLAY ===== */
+  #loading-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #000; z-index: 9999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.8s;
+  }
+  #loading-overlay.fade-out { opacity: 0; pointer-events: none; }
+  .loading-logo { font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #ffb000; margin-bottom: 20px; }
+  .loading-bar { width: 200px; height: 2px; background: rgba(255,176,0,0.15); border-radius: 1px; overflow: hidden; }
+  .loading-bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #ffb000, #ff6600); transition: width 0.4s; }
+  .loading-status { margin-top: 12px; font-size: 10px; color: #7a5500; letter-spacing: 2px; }
+
+  /* ===== TIME CONTROL BAR ===== */
+  #time-control {
+    bottom: 28px; left: 0; width: 100%; height: 36px;
+    background: linear-gradient(0deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.5) 80%, transparent 100%);
+    border-top: 1px solid rgba(255,176,0,0.1);
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 20px; font-size: 10px;
+  }
+  .time-btn {
+    background: rgba(255,176,0,0.08); border: 1px solid rgba(255,176,0,0.2);
+    color: var(--hud-color, #ffb000); width: 28px; height: 24px;
+    font-size: 12px; cursor: pointer; font-family: inherit; border-radius: 2px;
+    display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+  }
+  .time-btn:hover { background: rgba(255,176,0,0.2); border-color: var(--hud-color); }
+  .time-btn.active { background: rgba(255,176,0,0.25); border-color: var(--hud-color);
+    box-shadow: 0 0 6px var(--hud-glow); }
+  .time-speed {
+    background: rgba(255,176,0,0.05); border: 1px solid rgba(255,176,0,0.15);
+    color: var(--hud-color); padding: 3px 6px; font-family: inherit; font-size: 9px;
+    border-radius: 2px; cursor: pointer;
+  }
+  #time-slider {
+    flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+    background: rgba(255,176,0,0.15); border-radius: 2px; outline: none; cursor: pointer;
+  }
+  #time-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--hud-color, #ffb000); cursor: pointer;
+    box-shadow: 0 0 6px var(--hud-glow);
+  }
+  #time-display {
+    font-weight: 600; letter-spacing: 1px; min-width: 170px; text-align: right;
+  }
+  .time-live-badge {
+    background: rgba(0,255,0,0.15); border: 1px solid rgba(0,255,0,0.4);
+    color: #00ff88; padding: 2px 8px; font-size: 8px; font-weight: 700;
+    letter-spacing: 2px; border-radius: 2px; cursor: pointer;
+  }
+  .time-live-badge.inactive { background: rgba(255,176,0,0.1);
+    border-color: rgba(255,176,0,0.3); color: var(--hud-dim); }
+
+  /* ===== TIMELINE STRIP ===== */
+  #timeline-strip {
+    bottom: 64px; left: 260px; right: 10px; height: 32px;
+    background: rgba(0,0,0,0.7); border: 1px solid rgba(255,176,0,0.1);
+    border-radius: 3px; display: none; align-items: center;
+    padding: 0 12px; backdrop-filter: blur(4px);
+  }
+  #timeline-strip.visible { display: flex; }
+  .tl-label {
+    font-size: 8px; letter-spacing: 2px; color: var(--hud-dim);
+    margin-right: 8px; flex-shrink: 0;
+  }
+  .tl-track {
+    flex: 1; height: 16px; position: relative;
+    background: rgba(255,176,0,0.03); border-radius: 2px; overflow: visible;
+  }
+  .tl-marker {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 10px; height: 10px; border-radius: 50%; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.3); transition: all 0.2s;
+  }
+  .tl-marker:hover { transform: translate(-50%, -50%) scale(1.5); z-index: 2; }
+  .tl-marker.risk-CRITICAL { background: #ff4040; box-shadow: 0 0 6px rgba(255,64,64,0.6);
+    animation: tlPulse 1.5s infinite; }
+  .tl-marker.risk-HIGH { background: #ff8800; box-shadow: 0 0 4px rgba(255,136,0,0.4); }
+  .tl-marker.risk-MODERATE { background: #ffc800; }
+  .tl-marker.risk-LOW { background: #00cc44; }
+  .tl-marker.risk-NEGLIGIBLE { background: #666; }
+  @keyframes tlPulse { 0%,100% { box-shadow: 0 0 6px rgba(255,64,64,0.6); }
+    50% { box-shadow: 0 0 14px rgba(255,64,64,0.9); } }
+  .tl-now {
+    position: absolute; top: 0; bottom: 0; width: 1px;
+    background: var(--hud-color); opacity: 0.5;
+  }
+  .tl-tooltip {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.9); border: 1px solid var(--hud-color);
+    padding: 4px 8px; font-size: 9px; white-space: nowrap; border-radius: 3px;
+    pointer-events: none; display: none; z-index: 10;
+  }
+  .tl-marker:hover .tl-tooltip { display: block; }
+
+  /* ===== CONJUNCTION DETAIL PANEL ===== */
+  #conj-detail {
+    display: none; position: fixed; top: 52px; right: 300px; width: 480px;
+    max-height: calc(100vh - 120px); overflow-y: auto;
+    background: rgba(0,0,0,0.9); border: 1px solid rgba(255,176,0,0.2);
+    border-radius: 4px; z-index: 30; backdrop-filter: blur(10px);
+    scrollbar-width: thin; scrollbar-color: rgba(255,176,0,0.3) transparent;
+  }
+  #conj-detail.visible { display: block; }
+  .cd-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; border-bottom: 1px solid rgba(255,176,0,0.1);
+  }
+  .cd-title { font-size: 10px; font-weight: 700; letter-spacing: 2px; color: var(--hud-color); }
+  .cd-close {
+    background: none; border: 1px solid rgba(255,176,0,0.2); color: var(--hud-dim);
+    padding: 2px 8px; font-size: 9px; cursor: pointer; font-family: inherit; border-radius: 2px;
+  }
+  .cd-close:hover { border-color: var(--hud-color); color: var(--hud-color); }
+  .cd-body { padding: 12px 14px; }
+  .cd-section { margin-bottom: 14px; }
+  .cd-section-title {
+    font-size: 8px; letter-spacing: 3px; color: var(--hud-dim);
+    margin-bottom: 6px; text-transform: uppercase;
+    border-bottom: 1px solid rgba(255,176,0,0.06); padding-bottom: 3px;
+  }
+  .cd-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .cd-stat-box {
+    background: rgba(255,176,0,0.04); border: 1px solid rgba(255,176,0,0.08);
+    border-radius: 3px; padding: 6px 8px; text-align: center;
+  }
+  .cd-stat-label { font-size: 7px; color: var(--hud-dim); letter-spacing: 1px; margin-bottom: 2px; }
+  .cd-stat-value { font-size: 14px; font-weight: 700; }
+  .cd-chart { width: 100%; height: 200px; border-radius: 3px; overflow: hidden; }
+
+  /* ===== RISK MATRIX ===== */
+  #risk-matrix {
+    display: none; position: fixed; bottom: 100px; left: 260px; width: 320px;
+    background: rgba(0,0,0,0.9); border: 1px solid rgba(255,176,0,0.15);
+    border-radius: 4px; z-index: 25; backdrop-filter: blur(8px);
+  }
+  #risk-matrix.visible { display: block; }
+  .rm-header {
+    padding: 8px 12px; border-bottom: 1px solid rgba(255,176,0,0.08);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .rm-title { font-size: 9px; letter-spacing: 2px; color: var(--hud-dim); }
+  .rm-close {
+    background: none; border: none; color: var(--hud-dim);
+    font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  .rm-body { padding: 10px 12px; }
+  .rm-grid {
+    display: grid; grid-template-columns: 40px repeat(5, 1fr); gap: 2px; font-size: 8px;
+  }
+  .rm-cell {
+    height: 28px; display: flex; align-items: center; justify-content: center;
+    border-radius: 2px; font-weight: 600; font-size: 7px; letter-spacing: 0.5px;
+    position: relative;
+  }
+  .rm-cell-label { color: var(--hud-dim); font-size: 7px; letter-spacing: 1px; }
+  .rm-dot {
+    position: absolute; width: 6px; height: 6px; border-radius: 50%;
+    background: white; border: 1px solid rgba(0,0,0,0.5);
+  }
+
+  /* ===== CONJUNCTION GLOBE LAYER PULSES ===== */
+  @keyframes conjPulse {
+    0%, 100% { opacity: 0.8; }
+    50% { opacity: 0.3; }
+  }
+
+  @media (max-width: 768px) {
+    #controls { width: 180px; font-size: 10px; }
+    #info-panel { width: 240px; }
+    #intel-feed { width: 220px; }
+    #search-box { width: 90vw; }
+    #timeline-strip { left: 10px; }
+    #conj-detail { right: 10px; width: 90vw; }
+    #risk-matrix { left: 10px; }
+  }
+</style>
+</head>
+<body class="mode-normal">
+
+<!-- Loading Screen -->
+<div id="loading-overlay">
+  <div class="loading-logo">WORLDVIEW</div>
+  <div class="loading-bar"><div class="loading-bar-fill" id="loading-fill"></div></div>
+  <div class="loading-status" id="loading-status">INITIALIZING SYSTEMS...</div>
+</div>
+
+<!-- CesiumJS Globe -->
+<div id="cesiumContainer"></div>
+
+<!-- Filter Overlays -->
+<div id="scanlines" class="filter-overlay"></div>
+<div id="vignette" class="filter-overlay"></div>
+<div id="noise-overlay" class="filter-overlay"></div>
+<div id="flir-overlay" class="filter-overlay"></div>
+
+<!-- Detection Mode Badge -->
+<div id="detection-badge">DETECTION MODE ACTIVE</div>
+
+<!-- Top Header -->
+<header id="header" class="hud">
+  <div class="header-left">
+    <span class="logo">WORLDVIEW</span>
+    <span class="classification">UNCLASSIFIED // SDA DEMONSTRATION</span>
+  </div>
+  <div class="header-center" id="utc-clock">--:--:-- UTC</div>
+  <div class="header-right">
+    <span class="stat" id="stat-sat">SAT: --</span>
+    <span class="stat" id="stat-air">AIR: --</span>
+    <span class="stat" id="stat-mil">MIL: --</span>
+    <span class="stat" id="stat-sei">SEI: --</span>
+    <span class="stat" id="stat-conj">CONJ: --</span>
+  </div>
+</header>
+
+<!-- Left Control Panel -->
+<aside id="controls" class="hud hud-interactive">
+  <!-- View Modes -->
+  <div class="panel">
+    <h3>View Mode [1-4]</h3>
+    <div class="panel-body">
+      <div class="mode-buttons">
+        <button class="mode-btn active" data-mode="normal">1 NORMAL</button>
+        <button class="mode-btn" data-mode="crt">2 CRT</button>
+        <button class="mode-btn" data-mode="nvg">3 NVG</button>
+        <button class="mode-btn" data-mode="flir">4 FLIR</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Layers -->
+  <div class="panel">
+    <h3>Data Layers</h3>
+    <div class="panel-body">
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-satellites" checked>
+        <span>Satellites [S]</span>
+        <span class="count" id="count-sat">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-orbits">
+        <span>Orbit Paths [O]</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-flights">
+        <span>Aircraft [F]</span>
+        <span class="count" id="count-air">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-military">
+        <span>Military [M]</span>
+        <span class="count" id="count-mil">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-quakes">
+        <span>Earthquakes [Q]</span>
+        <span class="count" id="count-sei">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-conjunctions">
+        <span>Conjunctions [J]</span>
+        <span class="count" id="count-conj">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-traffic">
+        <span>Traffic [T]</span>
+        <span class="count" id="count-trf">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-cctv">
+        <span>CCTV [C]</span>
+        <span class="count" id="count-cctv">0</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Detection Mode -->
+  <div class="panel collapsed">
+    <h3>Detection [D]</h3>
+    <div class="panel-body">
+      <div class="mode-buttons" style="grid-template-columns: 1fr 1fr;">
+        <button class="mode-btn" id="btn-detect-sparse" data-detect="sparse">SPARSE</button>
+        <button class="mode-btn" id="btn-detect-full" data-detect="full">FULL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Post-Processing -->
+  <div class="panel collapsed">
+    <h3>Post-Processing [B]</h3>
+    <div class="panel-body">
+      <div class="slider-row">
+        <label>BLOOM</label>
+        <input type="range" id="fx-bloom" min="0" max="100" value="0">
+        <span class="val" id="fx-bloom-val">0</span>
+      </div>
+      <div class="slider-row">
+        <label>SHARPEN</label>
+        <input type="range" id="fx-sharpen" min="0" max="100" value="0">
+        <span class="val" id="fx-sharpen-val">0</span>
+      </div>
+      <div class="slider-row">
+        <label>SENSITIV</label>
+        <input type="range" id="fx-sensitivity" min="0" max="100" value="50">
+        <span class="val" id="fx-sens-val">50</span>
+      </div>
+      <div class="slider-row">
+        <label>PIXELATE</label>
+        <input type="range" id="fx-pixelate" min="0" max="100" value="0">
+        <span class="val" id="fx-pix-val">0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Locations -->
+  <div class="panel collapsed">
+    <h3>Locations [/]</h3>
+    <div class="panel-body">
+      <div class="preset-grid" id="preset-grid">
+        <button class="preset-btn" data-preset="global">GLOBAL</button>
+        <button class="preset-btn" data-preset="dc">WASH DC</button>
+        <button class="preset-btn" data-preset="london">LONDON</button>
+        <button class="preset-btn" data-preset="moscow">MOSCOW</button>
+        <button class="preset-btn" data-preset="beijing">BEIJING</button>
+        <button class="preset-btn" data-preset="tokyo">TOKYO</button>
+        <button class="preset-btn" data-preset="dubai">DUBAI</button>
+        <button class="preset-btn" data-preset="sydney">SYDNEY</button>
+        <button class="preset-btn" data-preset="cape">CAPE CANAV</button>
+        <button class="preset-btn" data-preset="baikonur">BAIKONUR</button>
+        <button class="preset-btn" data-preset="tehran">TEHRAN</button>
+        <button class="preset-btn" data-preset="pyongyang">PYONGYANG</button>
+        <button class="preset-btn" data-preset="pentagon">PENTAGON</button>
+        <button class="preset-btn" data-preset="shanghai">SHANGHAI</button>
+        <button class="preset-btn" data-preset="delhi">DELHI</button>
+        <button class="preset-btn" data-preset="austin">AUSTIN</button>
+        <button class="preset-btn" data-preset="cheyenne">NORAD</button>
+        <button class="preset-btn" data-preset="vandenberg">VANDENBERG</button>
+        <button class="preset-btn" data-preset="diego">DIEGO GARC</button>
+        <button class="preset-btn" data-preset="pinegap">PINE GAP</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CCTV City Selector -->
+  <div class="panel" id="cctv-panel" style="display:none;">
+    <h3>CCTV Feeds</h3>
+    <div class="panel-body">
+      <div class="mode-buttons" style="grid-template-columns: 1fr 1fr 1fr;">
+        <button class="mode-btn" data-cctv-city="austin">AUSTIN</button>
+        <button class="mode-btn" data-cctv-city="nyc">NYC</button>
+        <button class="mode-btn" data-cctv-city="london">LONDON</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Conjunction Analysis -->
+  <div class="panel collapsed">
+    <h3>Conjunction Analysis</h3>
+    <div class="panel-body">
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <div style="flex:1">
+          <div style="font-size:8px;color:var(--hud-dim);letter-spacing:1px;margin-bottom:2px;">HOURS</div>
+          <input type="number" id="conj-hours" value="24" min="1" max="168"
+            style="width:100%;background:rgba(255,176,0,0.05);border:1px solid rgba(255,176,0,0.15);
+            color:var(--hud-color);padding:4px;font-family:inherit;font-size:10px;border-radius:2px;">
+        </div>
+        <div style="flex:1">
+          <div style="font-size:8px;color:var(--hud-dim);letter-spacing:1px;margin-bottom:2px;">THRESH KM</div>
+          <input type="number" id="conj-threshold" value="10" min="0.1" max="100" step="0.1"
+            style="width:100%;background:rgba(255,176,0,0.05);border:1px solid rgba(255,176,0,0.15);
+            color:var(--hud-color);padding:4px;font-family:inherit;font-size:10px;border-radius:2px;">
+        </div>
+      </div>
+      <button class="btn-action" id="btn-analyze">ANALYZE CONJUNCTIONS</button>
+      <button class="btn-action" id="btn-risk-matrix" style="margin-top:4px;font-size:9px;padding:5px;opacity:0.7;">RISK MATRIX</button>
+      <div id="conj-results" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  <!-- Links -->
+  <div class="panel" style="text-align:center;">
+    <a href="/" style="color:var(--hud-dim);font-size:9px;letter-spacing:2px;text-decoration:none;">
+      OPEN SDA DASHBOARD
+    </a>
+    <span style="color:var(--hud-dim);margin:0 8px;">|</span>
+    <span style="color:var(--hud-dim);font-size:9px;letter-spacing:1px;cursor:pointer;" id="btn-help">KEYS [?]</span>
+  </div>
+</aside>
+
+<!-- Right Info Panel -->
+<aside id="info-panel" class="hud hud-interactive hidden">
+  <h3>TRACKED ENTITY</h3>
+  <div id="entity-info"></div>
+  <button class="btn-dismiss" id="btn-dismiss">DISMISS [ESC]</button>
+</aside>
+
+<!-- Intel Feed -->
+<div id="intel-feed" class="hud"></div>
+
+<!-- Conjunction Detail Panel -->
+<div id="conj-detail">
+  <div class="cd-header">
+    <span class="cd-title">CONJUNCTION DETAIL</span>
+    <button class="cd-close" id="cd-close">CLOSE</button>
+  </div>
+  <div class="cd-body">
+    <div class="cd-section">
+      <div class="cd-section-title">Event Summary</div>
+      <div class="cd-stats" id="cd-stats"></div>
+    </div>
+    <div class="cd-section">
+      <div class="cd-section-title">B-Plane Encounter Geometry</div>
+      <div class="cd-chart" id="cd-bplane"></div>
+    </div>
+    <div class="cd-section">
+      <div class="cd-section-title">Pc Evolution (Time to TCA)</div>
+      <div class="cd-chart" id="cd-pc-trend"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Risk Matrix -->
+<div id="risk-matrix">
+  <div class="rm-header">
+    <span class="rm-title">RISK MATRIX</span>
+    <button class="rm-close" id="rm-close">&times;</button>
+  </div>
+  <div class="rm-body">
+    <div style="text-align:center;font-size:8px;color:var(--hud-dim);letter-spacing:1px;margin-bottom:4px;">
+      RELATIVE VELOCITY (km/s) &rarr;
+    </div>
+    <div class="rm-grid" id="rm-grid"></div>
+    <div style="text-align:left;font-size:8px;color:var(--hud-dim);letter-spacing:1px;margin-top:4px;transform:rotate(0deg);">
+      &uarr; MISS DISTANCE (km)
+    </div>
+  </div>
+</div>
+
+<!-- Timeline Strip -->
+<div id="timeline-strip" class="hud">
+  <span class="tl-label">TCA TIMELINE</span>
+  <div class="tl-track" id="tl-track"></div>
+</div>
+
+<!-- Time Control Bar -->
+<div id="time-control" class="hud hud-interactive">
+  <button class="time-btn" id="time-rw" title="Step back 1 hour">&#9664;&#9664;</button>
+  <button class="time-btn" id="time-play" title="Play/Pause">&#9654;</button>
+  <button class="time-btn" id="time-ff" title="Step forward 1 hour">&#9654;&#9654;</button>
+  <select class="time-speed" id="time-speed" title="Playback speed">
+    <option value="1">1x</option>
+    <option value="10">10x</option>
+    <option value="60" selected>60x</option>
+    <option value="600">600x</option>
+    <option value="3600">3600x</option>
+  </select>
+  <input type="range" id="time-slider" min="0" max="86400" value="0" step="60">
+  <span id="time-display" style="color:var(--hud-color);">--:--:-- UTC</span>
+  <span class="time-live-badge" id="time-live" title="Return to live">LIVE</span>
+</div>
+
+<!-- Bottom Status Bar -->
+<footer id="status-bar" class="hud">
+  <span id="coords">LAT: --.---- LON: --.----</span>
+  <span id="cam-alt">ALT: -- km</span>
+  <span id="layer-status">LAYERS: SAT</span>
+  <span class="right" id="fps-display">FPS: --</span>
+</footer>
+
+<!-- Crosshair -->
+<div id="crosshair">
+  <div class="ch-h"></div>
+  <div class="ch-v"></div>
+</div>
+
+<!-- Search Box -->
+<div id="search-box">
+  <input type="text" id="search-input" placeholder="Search location... (ESC to close)">
+  <div id="search-results"></div>
+</div>
+
+<!-- CCTV Viewer -->
+<div id="cctv-viewer">
+  <div class="cctv-header">
+    <span id="cctv-title">CCTV FEED</span>
+    <button class="cctv-close" id="cctv-close">CLOSE</button>
+  </div>
+  <img id="cctv-image" src="" alt="CCTV Feed">
+</div>
+
+<!-- Keyboard Help -->
+<div id="keyboard-help">
+  <h2>KEYBOARD SHORTCUTS</h2>
+  <div class="key-group">
+    <h4>VIEW MODES</h4>
+    <div class="key-row"><kbd>1</kbd> <span>Normal mode</span></div>
+    <div class="key-row"><kbd>2</kbd> <span>CRT mode</span></div>
+    <div class="key-row"><kbd>3</kbd> <span>Night Vision (NVG)</span></div>
+    <div class="key-row"><kbd>4</kbd> <span>FLIR / Thermal</span></div>
+  </div>
+  <div class="key-group">
+    <h4>DATA LAYERS</h4>
+    <div class="key-row"><kbd>S</kbd> <span>Toggle satellites</span></div>
+    <div class="key-row"><kbd>O</kbd> <span>Toggle orbit paths</span></div>
+    <div class="key-row"><kbd>F</kbd> <span>Toggle aircraft</span></div>
+    <div class="key-row"><kbd>M</kbd> <span>Toggle military flights</span></div>
+    <div class="key-row"><kbd>Q</kbd> <span>Toggle earthquakes</span></div>
+    <div class="key-row"><kbd>T</kbd> <span>Toggle traffic</span></div>
+    <div class="key-row"><kbd>J</kbd> <span>Toggle conjunctions</span></div>
+    <div class="key-row"><kbd>C</kbd> <span>Toggle CCTV</span></div>
+  </div>
+  <div class="key-group">
+    <h4>TIME CONTROL</h4>
+    <div class="key-row"><kbd>Space</kbd> <span>Play / Pause time</span></div>
+  </div>
+  <div class="key-group">
+    <h4>CONTROLS</h4>
+    <div class="key-row"><kbd>D</kbd> <span>Toggle detection mode (off/sparse/full)</span></div>
+    <div class="key-row"><kbd>B</kbd> <span>Toggle bloom</span></div>
+    <div class="key-row"><kbd>G</kbd> <span>Global view</span></div>
+    <div class="key-row"><kbd>/</kbd> <span>Search location</span></div>
+    <div class="key-row"><kbd>?</kbd> <span>This help</span></div>
+    <div class="key-row"><kbd>Esc</kbd> <span>Close panel / deselect</span></div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// WORLDVIEW v2.0 — SDA Intelligence Dashboard
+// Full-spectrum geospatial intelligence: satellites, aircraft,
+// military flights, seismic, traffic, CCTV, and more.
+// ============================================================
+
+var API = '';
+var REFRESH_SATS_MS = 10000;
+var REFRESH_FLIGHTS_MS = 15000;
+var REFRESH_MIL_MS = 30000;
+var REFRESH_QUAKES_MS = 60000;
+
+// ===== EXPANDED CAMERA PRESETS =====
+var PRESETS = {
+  global:     { lon: 0,        lat: 20,     alt: 20000000, name: 'Global View' },
+  dc:         { lon: -77.04,   lat: 38.90,  alt: 80000,    name: 'Washington DC' },
+  london:     { lon: -0.12,    lat: 51.51,  alt: 80000,    name: 'London' },
+  moscow:     { lon: 37.62,    lat: 55.75,  alt: 80000,    name: 'Moscow' },
+  beijing:    { lon: 116.39,   lat: 39.91,  alt: 80000,    name: 'Beijing' },
+  tokyo:      { lon: 139.69,   lat: 35.69,  alt: 80000,    name: 'Tokyo' },
+  dubai:      { lon: 55.27,    lat: 25.20,  alt: 80000,    name: 'Dubai' },
+  sydney:     { lon: 151.21,   lat: -33.87, alt: 80000,    name: 'Sydney' },
+  cape:       { lon: -80.60,   lat: 28.39,  alt: 50000,    name: 'Cape Canaveral' },
+  baikonur:   { lon: 63.34,    lat: 45.62,  alt: 50000,    name: 'Baikonur Cosmodrome' },
+  tehran:     { lon: 51.39,    lat: 35.69,  alt: 80000,    name: 'Tehran' },
+  pyongyang:  { lon: 125.75,   lat: 39.02,  alt: 80000,    name: 'Pyongyang' },
+  pentagon:   { lon: -77.0558, lat: 38.8719,alt: 30000,    name: 'The Pentagon' },
+  shanghai:   { lon: 121.47,   lat: 31.23,  alt: 80000,    name: 'Shanghai' },
+  delhi:      { lon: 77.21,    lat: 28.61,  alt: 80000,    name: 'New Delhi' },
+  austin:     { lon: -97.74,   lat: 30.27,  alt: 50000,    name: 'Austin TX' },
+  cheyenne:   { lon: -104.86,  lat: 38.74,  alt: 50000,    name: 'NORAD Cheyenne Mtn' },
+  vandenberg: { lon: -120.57,  lat: 34.74,  alt: 50000,    name: 'Vandenberg SFB' },
+  diego:      { lon: 72.41,    lat: -7.32,  alt: 80000,    name: 'Diego Garcia' },
+  pinegap:    { lon: 133.74,   lat: -23.80, alt: 80000,    name: 'Pine Gap' },
+};
+
+// ===== STATE =====
+var viewer = null;
+var satEntities = {};
+var flightEntities = {};
+var milEntities = {};
+var quakeEntities = {};
+var orbitPolylines = {};
+var trafficEntities = [];
+var cctvEntities = {};
+var selectedEntity = null;
+var detectionMode = false;
+var detectionLevel = 'off'; // off, sparse, full
+
+var layerState = {
+  satellites: true, orbits: false, flights: false, military: false,
+  quakes: false, traffic: false, cctv: false, conjunctions: true
+};
+
+// ===== DOM HELPERS =====
+function $(id) { return document.getElementById(id); }
+
+function makeInfoRow(label, value) {
+  var row = document.createElement('div');
+  row.className = 'info-row';
+  var lbl = document.createElement('span');
+  lbl.className = 'info-label';
+  lbl.textContent = label;
+  var val = document.createElement('span');
+  val.className = 'info-value';
+  val.textContent = value;
+  row.appendChild(lbl);
+  row.appendChild(val);
+  return row;
+}
+
+function makeConjItem(e) {
+  var item = document.createElement('div');
+  item.className = 'conj-item';
+  var tag = document.createElement('span');
+  tag.className = 'risk-tag risk-' + e.risk;
+  tag.textContent = e.risk;
+  item.appendChild(tag);
+  item.appendChild(document.createTextNode(' '));
+  var primary = document.createElement('span');
+  primary.style.color = 'var(--hud-color)';
+  primary.textContent = e.primary_name || String(e.primary);
+  item.appendChild(primary);
+  item.appendChild(document.createTextNode(' / '));
+  var secondary = document.createElement('span');
+  secondary.style.color = 'var(--hud-color)';
+  secondary.textContent = e.secondary_name || String(e.secondary);
+  item.appendChild(secondary);
+  var br = document.createElement('br');
+  item.appendChild(br);
+  var detail = document.createElement('span');
+  detail.style.color = 'var(--hud-dim)';
+  detail.textContent = 'Miss: ' + e.miss_distance_km.toFixed(3) + ' km | Vel: ' + e.relative_velocity_km_s.toFixed(2) + ' km/s';
+  item.appendChild(detail);
+  return item;
+}
+
+// ===== LOADING =====
+function setLoadingProgress(pct, msg) {
+  var fill = $('loading-fill');
+  var status = $('loading-status');
+  if (fill) fill.style.width = pct + '%';
+  if (status) status.textContent = msg;
+}
+
+function hideLoading() {
+  var overlay = $('loading-overlay');
+  if (overlay) {
+    overlay.classList.add('fade-out');
+    setTimeout(function() { overlay.remove(); }, 1000);
+  }
+}
+
+// ===== CESIUM INIT =====
+function initCesium() {
+  setLoadingProgress(10, 'LOADING GLOBE ENGINE...');
+
+  Cesium.Ion.defaultAccessToken = undefined;
+
+  viewer = new Cesium.Viewer('cesiumContainer', {
+    animation: false,
+    timeline: false,
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    fullscreenButton: false,
+    infoBox: false,
+    selectionIndicator: false,
+    creditContainer: document.createElement('div'),
+    requestRenderMode: true,
+    maximumRenderTimeChange: 0.5,
+    targetFrameRate: 60,
+    orderIndependentTranslucency: false,
+    contextOptions: {
+      webgl: { alpha: false, antialias: true, preserveDrawingBuffer: false }
+    },
+  });
+
+  // Dark basemap
+  viewer.imageryLayers.removeAll();
+  viewer.imageryLayers.addImageryProvider(
+    new Cesium.UrlTemplateImageryProvider({
+      url: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+      maximumLevel: 18,
+      credit: new Cesium.Credit('CartoDB'),
+    })
+  );
+
+  // Globe styling
+  var scene = viewer.scene;
+  var globe = scene.globe;
+  scene.backgroundColor = Cesium.Color.BLACK;
+  globe.baseColor = Cesium.Color.fromCssColorString('#0a0a0a');
+  globe.enableLighting = false;
+  globe.showGroundAtmosphere = false;
+
+  scene.skyAtmosphere.show = true;
+  scene.skyAtmosphere.hueShift = -0.05;
+  scene.skyAtmosphere.saturationShift = -0.4;
+  scene.skyAtmosphere.brightnessShift = -0.3;
+  scene.sun.show = false;
+  scene.moon.show = false;
+
+  // Initial camera
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(0, 20, 20000000),
+    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 }
+  });
+
+  // Click handler
+  var handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
+  handler.setInputAction(function(click) {
+    var picked = scene.pick(click.position);
+    if (Cesium.defined(picked) && Cesium.defined(picked.id)) {
+      selectEntity(picked.id);
+    } else {
+      deselectEntity();
+    }
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  setLoadingProgress(30, 'GLOBE ENGINE READY');
+}
+
+// ===== INTEL FEED =====
+function addIntelItem(msg) {
+  var feed = $('intel-feed');
+  var item = document.createElement('div');
+  item.className = 'feed-item';
+  var ts = document.createElement('span');
+  ts.className = 'feed-time';
+  ts.textContent = new Date().toISOString().slice(11, 19) + ' UTC';
+  item.appendChild(ts);
+  item.appendChild(document.createTextNode(' ' + msg));
+  feed.prepend(item);
+  while (feed.children.length > 30) feed.lastChild.remove();
+}
+
+// ===== SATELLITE LAYER (with orbit regime color coding) =====
+async function loadSatellites() {
+  if (!layerState.satellites) return;
+  if (!timeState.live) return; // epoch mode uses fetchSatellitesAtEpoch
+  try {
+    var resp = await fetch(API + '/api/satellite-positions?limit=500');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    updateSatEntities(data.satellites || []);
+  } catch (e) { /* silent retry on next cycle */ }
+}
+
+// ===== ORBIT PATHS (viewport-filtered) =====
+var orbitCache = [];       // cached orbit data from API
+var orbitCacheDirty = true; // flag to refetch from API
+
+async function loadOrbitPaths() {
+  if (!layerState.orbits) {
+    clearOrbitPolylines();
+    orbitCache = [];
+    return;
+  }
+  try {
+    if (orbitCacheDirty || orbitCache.length === 0) {
+      var resp = await fetch(API + '/api/satellite-orbits?limit=200');
+      if (!resp.ok) return;
+      var data = await resp.json();
+      orbitCache = data.orbits || [];
+      orbitCacheDirty = false;
+    }
+    renderVisibleOrbits();
+  } catch (e) { /* silent */ }
+}
+
+function clearOrbitPolylines() {
+  for (var oid in orbitPolylines) { viewer.entities.remove(orbitPolylines[oid]); }
+  orbitPolylines = {};
+}
+
+function getViewBounds() {
+  var rect = viewer.camera.computeViewRectangle();
+  if (!rect) {
+    // Fallback when zoomed in very close
+    var carto = viewer.camera.positionCartographic;
+    var margin = 0.3; // ~17 degrees
+    return {
+      south: Cesium.Math.toDegrees(carto.latitude) - margin * 57.3,
+      north: Cesium.Math.toDegrees(carto.latitude) + margin * 57.3,
+      west: Cesium.Math.toDegrees(carto.longitude) - margin * 57.3,
+      east: Cesium.Math.toDegrees(carto.longitude) + margin * 57.3,
+    };
+  }
+  return {
+    south: Cesium.Math.toDegrees(rect.south),
+    north: Cesium.Math.toDegrees(rect.north),
+    west: Cesium.Math.toDegrees(rect.west),
+    east: Cesium.Math.toDegrees(rect.east),
+  };
+}
+
+function orbitIntersectsView(path, bounds) {
+  // Check if any point in the orbit path falls within the viewport (with margin)
+  var margin = 10; // degrees margin for orbits partially in view
+  var s = bounds.south - margin, n = bounds.north + margin;
+  var w = bounds.west - margin, e = bounds.east + margin;
+  var wraps = w > e; // viewport wraps across antimeridian
+  for (var i = 0; i < path.length; i += 3) { // sample every 3rd point for speed
+    var lat = path[i].lat, lon = path[i].lon;
+    if (lat < s || lat > n) continue;
+    if (wraps) { if (lon >= w || lon <= e) return true; }
+    else { if (lon >= w && lon <= e) return true; }
+  }
+  return false;
+}
+
+function renderVisibleOrbits() {
+  var bounds = getViewBounds();
+  var fullGlobe = (bounds.north - bounds.south) > 160;
+
+  clearOrbitPolylines();
+
+  var rendered = 0;
+  var maxOrbits = 150; // hard cap to prevent OOM
+
+  for (var j = 0; j < orbitCache.length && rendered < maxOrbits; j++) {
+    var orbit = orbitCache[j];
+    if (!orbit.path || orbit.path.length < 2) continue;
+
+    // Skip viewport check when zoomed out to full globe
+    if (!fullGlobe && !orbitIntersectsView(orbit.path, bounds)) continue;
+
+    var positions = [];
+    for (var k = 0; k < orbit.path.length; k++) {
+      var p = orbit.path[k];
+      positions.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.alt_km * 1000));
+    }
+    var lineId = 'orbit-' + orbit.norad_id;
+    orbitPolylines[lineId] = viewer.entities.add({
+      id: lineId,
+      polyline: {
+        positions: positions, width: 1,
+        material: new Cesium.ColorMaterialProperty(Cesium.Color.CYAN.withAlpha(0.25)),
+      }
+    });
+    rendered++;
+  }
+}
+
+// ===== FLIGHT LAYER (CIVILIAN) =====
+async function loadFlights() {
+  if (!layerState.flights) return;
+  try {
+    var resp = await fetch(API + '/api/flights');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    var flights = data.flights || [];
+    $('count-air').textContent = flights.length;
+    $('stat-air').textContent = 'AIR: ' + flights.length;
+
+    var currentIds = new Set();
+    for (var i = 0; i < flights.length; i++) {
+      var f = flights[i];
+      if (!f.lon || !f.lat) continue;
+      currentIds.add(f.icao24);
+      var id = 'flight-' + f.icao24;
+      var alt = (f.alt_m || 10000);
+      var ptColor = Cesium.Color.fromCssColorString('#44aaff');
+
+      if (flightEntities[id]) {
+        flightEntities[id].position = Cesium.Cartesian3.fromDegrees(f.lon, f.lat, alt);
+      } else {
+        var showLabel = detectionLevel === 'full' || (detectionLevel === 'sparse' && i % 10 === 0);
+        flightEntities[id] = viewer.entities.add({
+          id: id, name: (f.callsign || f.icao24).trim(),
+          position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, alt),
+          point: {
+            pixelSize: detectionMode ? 5 : 3,
+            color: ptColor,
+            outlineColor: detectionMode ? Cesium.Color.WHITE.withAlpha(0.3) : Cesium.Color.TRANSPARENT,
+            outlineWidth: detectionMode ? 2 : 0,
+          },
+          label: {
+            text: detectionMode
+              ? ((f.callsign || f.icao24).trim() + '\n' + f.icao24)
+              : (f.callsign || '').trim(),
+            font: '9px JetBrains Mono',
+            fillColor: ptColor,
+            outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(8, -5),
+            scaleByDistance: new Cesium.NearFarScalar(5e4, 1, 2e6, 0),
+            translucencyByDistance: new Cesium.NearFarScalar(1e5, 1, 5e6, 0),
+            showBackground: detectionMode,
+            backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
+            show: detectionMode ? showLabel : true,
+          },
+          properties: {
+            type: 'aircraft', icao24: f.icao24,
+            origin_country: f.origin_country, velocity: f.velocity, heading: f.heading,
+          }
+        });
+      }
+    }
+    for (var fid in flightEntities) {
+      if (!currentIds.has(fid.replace('flight-', ''))) {
+        viewer.entities.remove(flightEntities[fid]);
+        delete flightEntities[fid];
+      }
+    }
+  } catch (e) { /* silent */ }
+}
+
+// ===== MILITARY FLIGHT LAYER =====
+async function loadMilitaryFlights() {
+  if (!layerState.military) return;
+  try {
+    var resp = await fetch(API + '/api/military-flights');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    var flights = data.flights || [];
+    $('count-mil').textContent = flights.length;
+    $('stat-mil').textContent = 'MIL: ' + flights.length;
+
+    var currentIds = new Set();
+    for (var i = 0; i < flights.length; i++) {
+      var f = flights[i];
+      if (!f.lon || !f.lat) continue;
+      currentIds.add(f.icao24);
+      var id = 'mil-' + f.icao24;
+      var alt = (f.alt_m || 10000);
+      if (typeof alt === 'string') alt = 10000;
+
+      if (milEntities[id]) {
+        milEntities[id].position = Cesium.Cartesian3.fromDegrees(f.lon, f.lat, alt);
+      } else {
+        var showLabel = detectionLevel === 'full' || (detectionLevel === 'sparse' && i % 5 === 0);
+        milEntities[id] = viewer.entities.add({
+          id: id, name: (f.callsign || f.icao24 || 'MIL').trim(),
+          position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, alt),
+          point: {
+            pixelSize: detectionMode ? 7 : 5,
+            color: Cesium.Color.ORANGE,
+            outlineColor: detectionMode ? Cesium.Color.RED.withAlpha(0.4) : Cesium.Color.fromAlpha(Cesium.Color.ORANGE, 0.3),
+            outlineWidth: detectionMode ? 3 : 1,
+          },
+          label: {
+            text: detectionMode
+              ? ((f.callsign || f.icao24).trim() + '\n' + (f.type || 'MIL'))
+              : (f.callsign || '').trim(),
+            font: (detectionMode ? '10px' : '9px') + ' JetBrains Mono',
+            fillColor: Cesium.Color.ORANGE,
+            outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(10, -8),
+            scaleByDistance: new Cesium.NearFarScalar(5e4, 1, 5e6, 0.3),
+            translucencyByDistance: detectionMode
+              ? new Cesium.NearFarScalar(5e4, 1, 1e7, 0.6)
+              : new Cesium.NearFarScalar(1e5, 1, 5e6, 0),
+            showBackground: detectionMode,
+            backgroundColor: Cesium.Color.BLACK.withAlpha(0.6),
+            show: detectionMode ? showLabel : true,
+          },
+          properties: {
+            type: 'military', icao24: f.icao24,
+            aircraft_type: f.type, squawk: f.squawk,
+            velocity: f.velocity, heading: f.heading,
+          }
+        });
+      }
+    }
+    for (var mid in milEntities) {
+      if (!currentIds.has(mid.replace('mil-', ''))) {
+        viewer.entities.remove(milEntities[mid]);
+        delete milEntities[mid];
+      }
+    }
+    if (flights.length > 0) {
+      addIntelItem('Military layer: ' + flights.length + ' aircraft tracked');
+    }
+  } catch (e) { /* silent */ }
+}
+
+// ===== EARTHQUAKE LAYER =====
+async function loadEarthquakes() {
+  if (!layerState.quakes) return;
+  try {
+    var resp = await fetch(API + '/api/earthquakes');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    var quakes = data.earthquakes || [];
+    $('count-sei').textContent = quakes.length;
+    $('stat-sei').textContent = 'SEI: ' + quakes.length;
+
+    for (var qid in quakeEntities) { viewer.entities.remove(quakeEntities[qid]); }
+    quakeEntities = {};
+
+    for (var i = 0; i < quakes.length; i++) {
+      var q = quakes[i];
+      var qeid = 'quake-' + q.id;
+      var mag = q.magnitude;
+      var size = Math.max(6, mag * 4);
+      var color = mag >= 6 ? Cesium.Color.RED :
+                  mag >= 4.5 ? Cesium.Color.ORANGE :
+                  mag >= 3 ? Cesium.Color.YELLOW :
+                  Cesium.Color.fromCssColorString('#888');
+
+      // Pulsing ring for significant quakes
+      var ringRadius = mag >= 4.5 ? mag * 15000 : 0;
+
+      quakeEntities[qeid] = viewer.entities.add({
+        id: qeid, name: q.title,
+        position: Cesium.Cartesian3.fromDegrees(q.lon, q.lat, 0),
+        point: { pixelSize: size, color: color.withAlpha(0.7), outlineColor: color, outlineWidth: 1 },
+        label: {
+          text: 'M' + mag.toFixed(1), font: '9px JetBrains Mono',
+          fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(size + 4, 0),
+          scaleByDistance: new Cesium.NearFarScalar(1e5, 1, 1e7, 0.3),
+          translucencyByDistance: new Cesium.NearFarScalar(1e6, 1, 2e7, 0),
+        },
+        ellipse: ringRadius > 0 ? {
+          semiMajorAxis: ringRadius, semiMinorAxis: ringRadius,
+          material: Cesium.Color.RED.withAlpha(0.05),
+          outline: true, outlineColor: color.withAlpha(0.3), outlineWidth: 1,
+          height: 0,
+        } : undefined,
+        properties: { type: 'earthquake', magnitude: mag, place: q.place, time: q.time, depth_km: q.depth_km }
+      });
+    }
+  } catch (e) { /* silent */ }
+}
+
+// ===== STREET TRAFFIC SIMULATION =====
+var trafficRoads = [];
+var trafficParticles = [];
+var trafficAnimFrame = null;
+
+async function loadTraffic() {
+  if (!layerState.traffic) {
+    clearTraffic();
+    return;
+  }
+
+  var carto = viewer.camera.positionCartographic;
+  var alt = carto.height;
+
+  // Only load traffic when zoomed in
+  if (alt > 100000) {
+    clearTraffic();
+    $('count-trf').textContent = '0';
+    return;
+  }
+
+  var lat = Cesium.Math.toDegrees(carto.latitude);
+  var lon = Cesium.Math.toDegrees(carto.longitude);
+  var span = Math.min(0.1, alt / 500000);
+
+  try {
+    var resp = await fetch(API + '/api/traffic?south=' + (lat-span) + '&west=' + (lon-span) +
+      '&north=' + (lat+span) + '&east=' + (lon+span));
+    if (!resp.ok) return;
+    var data = await resp.json();
+    trafficRoads = data.roads || [];
+    $('count-trf').textContent = trafficRoads.length;
+
+    // Spawn particles along roads
+    spawnTrafficParticles();
+    if (trafficRoads.length > 0) {
+      addIntelItem('Traffic: ' + trafficRoads.length + ' road segments loaded');
+    }
+  } catch (e) { /* silent */ }
+}
+
+function clearTraffic() {
+  for (var i = 0; i < trafficEntities.length; i++) {
+    viewer.entities.remove(trafficEntities[i]);
+  }
+  trafficEntities = [];
+  trafficParticles = [];
+  trafficRoads = [];
+}
+
+function spawnTrafficParticles() {
+  // Clear old particles
+  for (var i = 0; i < trafficEntities.length; i++) {
+    viewer.entities.remove(trafficEntities[i]);
+  }
+  trafficEntities = [];
+  trafficParticles = [];
+
+  // Spawn particles on roads
+  var maxParticles = 500;
+  var count = 0;
+  for (var r = 0; r < trafficRoads.length && count < maxParticles; r++) {
+    var road = trafficRoads[r];
+    var coords = road.coords;
+    if (coords.length < 2) continue;
+
+    var density = road.type === 'motorway' ? 6 : road.type === 'trunk' ? 4 : road.type === 'primary' ? 3 : 2;
+    density = Math.min(density, maxParticles - count);
+
+    for (var p = 0; p < density; p++) {
+      var progress = Math.random();
+      var speed = 0.0001 + Math.random() * 0.0004;
+      var ptColor = road.type === 'motorway'
+        ? Cesium.Color.fromCssColorString('#00ff88')
+        : road.type === 'trunk'
+          ? Cesium.Color.fromCssColorString('#44ff44')
+          : Cesium.Color.fromCssColorString('#88ff44');
+
+      var pos = interpolateRoad(coords, progress);
+      var entity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, 20),
+        point: { pixelSize: detectionMode ? 5 : 3, color: ptColor.withAlpha(0.8), outlineWidth: 0 },
+      });
+
+      trafficEntities.push(entity);
+      trafficParticles.push({
+        entity: entity, road: coords, progress: progress, speed: speed,
+      });
+      count++;
+    }
+  }
+
+  if (trafficParticles.length > 0 && !trafficAnimFrame) {
+    animateTraffic();
+  }
+}
+
+function interpolateRoad(coords, t) {
+  var totalLen = 0;
+  var segLens = [];
+  for (var i = 1; i < coords.length; i++) {
+    var dx = coords[i].lon - coords[i-1].lon;
+    var dy = coords[i].lat - coords[i-1].lat;
+    var len = Math.sqrt(dx*dx + dy*dy);
+    segLens.push(len);
+    totalLen += len;
+  }
+  if (totalLen === 0) return coords[0];
+
+  var targetDist = t * totalLen;
+  var accumulated = 0;
+  for (var j = 0; j < segLens.length; j++) {
+    if (accumulated + segLens[j] >= targetDist) {
+      var segT = (targetDist - accumulated) / segLens[j];
+      return {
+        lat: coords[j].lat + segT * (coords[j+1].lat - coords[j].lat),
+        lon: coords[j].lon + segT * (coords[j+1].lon - coords[j].lon),
+      };
+    }
+    accumulated += segLens[j];
+  }
+  return coords[coords.length - 1];
+}
+
+function animateTraffic() {
+  if (!layerState.traffic || trafficParticles.length === 0) {
+    trafficAnimFrame = null;
+    return;
+  }
+  for (var i = 0; i < trafficParticles.length; i++) {
+    var tp = trafficParticles[i];
+    tp.progress += tp.speed;
+    if (tp.progress >= 1) tp.progress = 0;
+    var pos = interpolateRoad(tp.road, tp.progress);
+    tp.entity.position = Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, 20);
+  }
+  trafficAnimFrame = requestAnimationFrame(animateTraffic);
+}
+
+// ===== CCTV LAYER =====
+var currentCCTVCity = '';
+
+async function loadCCTV(city) {
+  if (!layerState.cctv) return;
+  city = city || currentCCTVCity || 'austin';
+  currentCCTVCity = city;
+
+  try {
+    var resp = await fetch(API + '/api/cctv?city=' + encodeURIComponent(city));
+    if (!resp.ok) return;
+    var data = await resp.json();
+    var cameras = data.cameras || [];
+    $('count-cctv').textContent = cameras.length;
+
+    for (var cid in cctvEntities) { viewer.entities.remove(cctvEntities[cid]); }
+    cctvEntities = {};
+
+    for (var i = 0; i < cameras.length; i++) {
+      var cam = cameras[i];
+      if (!cam.lat || !cam.lon) continue;
+      var ceid = 'cctv-' + cam.id;
+      cctvEntities[ceid] = viewer.entities.add({
+        id: ceid, name: cam.name || 'Camera',
+        position: Cesium.Cartesian3.fromDegrees(cam.lon, cam.lat, 30),
+        billboard: {
+          image: 'data:image/svg+xml,' + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ff6600" stroke-width="2"><rect x="2" y="5" width="14" height="10" rx="2"/><polygon points="22 5 16 9 16 15 22 19"/></svg>'
+          ),
+          width: 20, height: 20,
+          scaleByDistance: new Cesium.NearFarScalar(1e3, 1.5, 5e5, 0.3),
+          translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 1e6, 0),
+        },
+        label: {
+          text: cam.name || '', font: '8px JetBrains Mono',
+          fillColor: Cesium.Color.fromCssColorString('#ff6600'),
+          outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(14, 0),
+          scaleByDistance: new Cesium.NearFarScalar(1e3, 1, 2e5, 0),
+        },
+        properties: {
+          type: 'cctv', camera_id: cam.id, image_url: cam.image_url, city: cam.city,
+        }
+      });
+    }
+
+    if (cameras.length > 0) {
+      addIntelItem('CCTV: ' + cameras.length + ' cameras loaded for ' + city.toUpperCase());
+    }
+  } catch (e) { /* silent */ }
+}
+
+function showCCTVFeed(entity) {
+  var props = entity.properties;
+  var url = props.image_url ? props.image_url.getValue() : '';
+  if (!url) return;
+  $('cctv-title').textContent = 'CCTV: ' + (entity.name || 'FEED');
+  $('cctv-image').src = url;
+  $('cctv-image').onerror = function() { this.alt = 'Feed unavailable'; };
+  $('cctv-viewer').classList.add('visible');
+}
+
+// ===== CONJUNCTION ANALYSIS =====
+async function runConjunctionAnalysis() {
+  var btn = $('btn-analyze');
+  var results = $('conj-results');
+  btn.textContent = 'ANALYZING...';
+  btn.disabled = true;
+  try {
+    var hours = parseFloat($('conj-hours').value) || 24;
+    var threshold = parseFloat($('conj-threshold').value) || 10;
+    var resp = await fetch(API + '/conjunctions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours: hours, threshold_km: threshold })
+    });
+    var events = await resp.json();
+    $('stat-conj').textContent = 'CONJ: ' + events.length;
+    results.replaceChildren();
+    if (events.length === 0) {
+      var noResult = document.createElement('div');
+      noResult.style.cssText = 'font-size:10px;color:var(--hud-dim);padding:6px 0;';
+      noResult.textContent = 'No conjunctions detected';
+      results.appendChild(noResult);
+      renderConjunctionsOnGlobe([]);
+      updateTimelineStrip([]);
+    } else {
+      for (var i = 0; i < events.length; i++) {
+        var item = makeConjItem(events[i]);
+        item.style.cursor = 'pointer';
+        item.addEventListener('click', (function(d) {
+          return function() { openConjunctionDetail(d); };
+        })(events[i]));
+        results.appendChild(item);
+      }
+      addIntelItem('Conjunction analysis: ' + events.length + ' events detected');
+
+      // Fetch globe data for rendering conjunctions on the 3D globe
+      fetchConjunctionGlobeData(hours, threshold);
+
+      // Update timeline strip
+      updateTimelineStrip(events);
+    }
+  } catch (e) {
+    var errDiv = document.createElement('div');
+    errDiv.style.cssText = 'color:#ff4040;font-size:10px;';
+    errDiv.textContent = 'Analysis failed';
+    results.replaceChildren(errDiv);
+  }
+  btn.textContent = 'ANALYZE CONJUNCTIONS';
+  btn.disabled = false;
+}
+
+async function fetchConjunctionGlobeData(hours, threshold) {
+  try {
+    var resp = await fetch(API + '/api/conjunction-globe-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours: hours, threshold_km: threshold })
+    });
+    if (!resp.ok) return;
+    var data = await resp.json();
+    // Normalize nested API format to flat fields for rendering
+    var rawEvents = data.conjunctions || data.events || [];
+    var normalized = rawEvents.map(function(e) {
+      var flat = Object.assign({}, e);
+      flat.primary = e.primary || e.primary_norad_id;
+      flat.secondary = e.secondary || e.secondary_norad_id;
+      if (e.primary_position) {
+        flat.primary_lat = e.primary_position.lat;
+        flat.primary_lon = e.primary_position.lon;
+        flat.primary_alt_km = e.primary_position.alt_km;
+      }
+      if (e.secondary_position) {
+        flat.secondary_lat = e.secondary_position.lat;
+        flat.secondary_lon = e.secondary_position.lon;
+        flat.secondary_alt_km = e.secondary_position.alt_km;
+      }
+      if (e.bplane) {
+        flat.bplane_x_km = e.bplane.miss_x_km;
+        flat.bplane_y_km = e.bplane.miss_y_km;
+        flat.sigma_combined_km = e.bplane.sigma_combined_km || flat.sigma_combined_km || 0.07;
+      }
+      return flat;
+    });
+    renderConjunctionsOnGlobe(normalized);
+    conjEvents = normalized; // update for detail panel clicks
+    updateTimelineStrip(normalized);
+    addIntelItem('Conjunctions rendered on globe: ' + normalized.length + ' events');
+  } catch (e) {
+    // Fallback: render with basic data (no lat/lon), which won't show on globe
+    addIntelItem('Globe conjunction data unavailable — showing table only');
+  }
+}
+
+// ===== ENTITY SELECTION =====
+function selectEntity(entity) {
+  selectedEntity = entity;
+  var panel = $('info-panel');
+  var info = $('entity-info');
+  panel.classList.remove('hidden');
+  info.replaceChildren();
+
+  var props = entity.properties;
+  var type = (props && props.type) ? props.type.getValue() : 'unknown';
+
+  info.appendChild(makeInfoRow('NAME', entity.name || 'Unknown'));
+  info.appendChild(makeInfoRow('TYPE', type.toUpperCase()));
+
+  if (type === 'conjunction' && props) {
+    var idx = props.eventIndex ? props.eventIndex.getValue() : 0;
+    if (conjEvents[idx]) { openConjunctionDetail(conjEvents[idx]); }
+    info.appendChild(makeInfoRow('TYPE', 'CONJUNCTION EVENT'));
+    info.appendChild(makeInfoRow('INDEX', String(idx)));
+  } else if (type === 'satellite' && props) {
+    info.appendChild(makeInfoRow('NORAD ID', String(props.norad_id ? props.norad_id.getValue() : '')));
+    info.appendChild(makeInfoRow('ALTITUDE', (props.alt_km ? props.alt_km.getValue().toFixed(1) : '0') + ' km'));
+    info.appendChild(makeInfoRow('VELOCITY', (props.velocity ? props.velocity.getValue().toFixed(3) : '0') + ' km/s'));
+    var regimeVal = props.regime ? props.regime.getValue() : '';
+    if (regimeVal) info.appendChild(makeInfoRow('REGIME', regimeVal));
+    viewer.trackedEntity = entity;
+  } else if (type === 'aircraft' && props) {
+    info.appendChild(makeInfoRow('ICAO24', props.icao24 ? props.icao24.getValue() : ''));
+    info.appendChild(makeInfoRow('COUNTRY', props.origin_country ? props.origin_country.getValue() : ''));
+    var vel = props.velocity ? props.velocity.getValue() : 0;
+    info.appendChild(makeInfoRow('SPEED', vel ? vel.toFixed(0) + ' m/s' : '--'));
+    var hdg = props.heading ? props.heading.getValue() : 0;
+    info.appendChild(makeInfoRow('HEADING', hdg ? hdg.toFixed(0) + '\u00B0' : '--'));
+    viewer.trackedEntity = entity;
+  } else if (type === 'military' && props) {
+    info.appendChild(makeInfoRow('ICAO24', props.icao24 ? props.icao24.getValue() : ''));
+    info.appendChild(makeInfoRow('AIRCRAFT', props.aircraft_type ? props.aircraft_type.getValue() : 'UNKNOWN'));
+    info.appendChild(makeInfoRow('SQUAWK', props.squawk ? props.squawk.getValue() : '--'));
+    var mvel = props.velocity ? props.velocity.getValue() : 0;
+    info.appendChild(makeInfoRow('SPEED', mvel ? mvel.toFixed(0) + ' m/s' : '--'));
+    var mhdg = props.heading ? props.heading.getValue() : 0;
+    info.appendChild(makeInfoRow('HEADING', mhdg ? mhdg.toFixed(0) + '\u00B0' : '--'));
+    viewer.trackedEntity = entity;
+  } else if (type === 'earthquake' && props) {
+    info.appendChild(makeInfoRow('MAGNITUDE', 'M' + (props.magnitude ? props.magnitude.getValue().toFixed(1) : '?')));
+    info.appendChild(makeInfoRow('LOCATION', props.place ? props.place.getValue() : ''));
+    info.appendChild(makeInfoRow('TIME', props.time ? props.time.getValue() : ''));
+    info.appendChild(makeInfoRow('DEPTH', (props.depth_km ? props.depth_km.getValue().toFixed(1) : '?') + ' km'));
+  } else if (type === 'cctv' && props) {
+    info.appendChild(makeInfoRow('CAMERA ID', props.camera_id ? props.camera_id.getValue() : ''));
+    info.appendChild(makeInfoRow('CITY', props.city ? props.city.getValue() : ''));
+    showCCTVFeed(entity);
+  }
+
+  addIntelItem('Tracking: ' + (entity.name || 'Unknown entity'));
+}
+
+function deselectEntity() {
+  selectedEntity = null;
+  $('info-panel').classList.add('hidden');
+  viewer.trackedEntity = undefined;
+}
+
+// ===== VIEW MODE SWITCHING =====
+function setViewMode(mode) {
+  document.body.className = 'mode-' + mode + (detectionMode ? ' detection-mode' : '');
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  addIntelItem('View mode: ' + mode.toUpperCase());
+
+  // Apply mode-specific post-processing
+  if (mode === 'nvg') {
+    applyPostProcessing({ bloom: 40, sensitivity: 80, sharpen: 0, pixelate: 0 });
+  } else if (mode === 'crt') {
+    applyPostProcessing({ bloom: 20, sensitivity: 50, sharpen: 30, pixelate: 0 });
+  } else if (mode === 'flir') {
+    applyPostProcessing({ bloom: 30, sensitivity: 60, sharpen: 20, pixelate: 0 });
+  } else {
+    applyPostProcessing({ bloom: 0, sensitivity: 50, sharpen: 0, pixelate: 0 });
+  }
+}
+
+// ===== DETECTION MODE =====
+function toggleDetection(level) {
+  if (detectionLevel === level) {
+    detectionLevel = 'off';
+    detectionMode = false;
+  } else {
+    detectionLevel = level;
+    detectionMode = true;
+  }
+
+  document.body.classList.toggle('detection-mode', detectionMode);
+  $('btn-detect-sparse').classList.toggle('active', detectionLevel === 'sparse');
+  $('btn-detect-full').classList.toggle('active', detectionLevel === 'full');
+
+  addIntelItem('Detection mode: ' + (detectionMode ? detectionLevel.toUpperCase() : 'OFF'));
+  refreshEntityVisuals();
+}
+
+function refreshEntityVisuals() {
+  for (var sid in satEntities) {
+    var se = satEntities[sid];
+    if (se.point) {
+      se.point.pixelSize = detectionMode ? 7 : 5;
+      se.point.outlineWidth = detectionMode ? 3 : 2;
+    }
+    if (se.label) {
+      se.label.showBackground = detectionMode;
+      se.label.font = (detectionMode ? '11px' : '10px') + ' JetBrains Mono';
+    }
+  }
+  for (var fid in flightEntities) {
+    var fe = flightEntities[fid];
+    if (fe.point) { fe.point.pixelSize = detectionMode ? 5 : 3; }
+  }
+  for (var mid in milEntities) {
+    var me = milEntities[mid];
+    if (me.point) {
+      me.point.pixelSize = detectionMode ? 7 : 5;
+      me.point.outlineWidth = detectionMode ? 3 : 1;
+    }
+  }
+}
+
+// ===== POST-PROCESSING =====
+function applyPostProcessing(vals) {
+  $('fx-bloom').value = vals.bloom;
+  $('fx-bloom-val').textContent = vals.bloom;
+  $('fx-sharpen').value = vals.sharpen;
+  $('fx-sharpen-val').textContent = vals.sharpen;
+  $('fx-sensitivity').value = vals.sensitivity;
+  $('fx-sens-val').textContent = vals.sensitivity;
+  $('fx-pixelate').value = vals.pixelate;
+  $('fx-pix-val').textContent = vals.pixelate;
+  updatePostProcessing();
+}
+
+function updatePostProcessing() {
+  var bloom = parseInt($('fx-bloom').value);
+  var sharpen = parseInt($('fx-sharpen').value);
+  var sensitivity = parseInt($('fx-sensitivity').value);
+  var pixelate = parseInt($('fx-pixelate').value);
+
+  $('fx-bloom-val').textContent = bloom;
+  $('fx-sharpen-val').textContent = sharpen;
+  $('fx-sens-val').textContent = sensitivity;
+  $('fx-pix-val').textContent = pixelate;
+
+  var canvas = document.querySelector('#cesiumContainer canvas');
+  if (!canvas) return;
+
+  var existingFilter = '';
+  var mode = document.body.className.match(/mode-(\w+)/);
+  if (mode) {
+    switch (mode[1]) {
+      case 'crt': existingFilter = 'sepia(100%) hue-rotate(70deg) saturate(400%) brightness(0.7) contrast(1.1)'; break;
+      case 'nvg': existingFilter = 'sepia(100%) hue-rotate(70deg) saturate(500%) brightness(1.2) contrast(1.4)'; break;
+      case 'flir': existingFilter = 'saturate(150%) hue-rotate(190deg) brightness(0.85) contrast(1.4)'; break;
+      default: existingFilter = ''; break;
+    }
+  }
+
+  var brightnessMod = 0.5 + (sensitivity / 100) * 1.0;
+  var sharpVal = sharpen > 0 ? ' contrast(' + (1 + sharpen/200) + ')' : '';
+  var bloomCSS = bloom > 0
+    ? ' drop-shadow(0 0 ' + (bloom/10) + 'px rgba(255,255,255,' + (bloom/200) + '))'
+    : '';
+
+  canvas.style.filter = existingFilter
+    + ' brightness(' + brightnessMod.toFixed(2) + ')'
+    + sharpVal
+    + bloomCSS;
+
+  if (pixelate > 10) {
+    var scale = 1 - (pixelate / 150);
+    canvas.style.imageRendering = 'pixelated';
+    canvas.style.transform = 'scale(' + (1/scale).toFixed(2) + ')';
+    canvas.style.transformOrigin = 'center center';
+  } else {
+    canvas.style.imageRendering = '';
+    canvas.style.transform = '';
+  }
+}
+
+// ===== CAMERA PRESETS =====
+function flyToPreset(key) {
+  var p = PRESETS[key];
+  if (!p) return;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.alt),
+    orientation: { heading: 0, pitch: Cesium.Math.toRadians(p.alt > 1000000 ? -90 : -45), roll: 0 },
+    duration: 2.0,
+  });
+  addIntelItem('Camera: ' + p.name);
+
+  // Auto-load CCTV for supported cities
+  if (layerState.cctv) {
+    var cctvMap = { austin: 'austin', london: 'london', dc: 'austin' };
+    if (cctvMap[key]) loadCCTV(cctvMap[key]);
+  }
+}
+
+// ===== LOCATION SEARCH =====
+var searchTimeout = null;
+
+function openSearch() {
+  $('search-box').classList.add('visible');
+  $('search-input').value = '';
+  $('search-input').focus();
+  $('search-results').replaceChildren();
+}
+
+function closeSearch() {
+  $('search-box').classList.remove('visible');
+}
+
+async function doSearch(query) {
+  if (query.length < 2) {
+    $('search-results').replaceChildren();
+    return;
+  }
+
+  try {
+    var resp = await fetch(API + '/api/geocode?q=' + encodeURIComponent(query));
+    if (!resp.ok) return;
+    var data = await resp.json();
+    var results = $('search-results');
+    results.replaceChildren();
+
+    for (var i = 0; i < (data.results || []).length; i++) {
+      var r = data.results[i];
+      var div = document.createElement('div');
+      div.className = 'search-result';
+      div.dataset.lat = r.lat;
+      div.dataset.lon = r.lon;
+
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'sr-name';
+      nameSpan.textContent = r.name.split(',')[0];
+      div.appendChild(nameSpan);
+
+      var typeSpan = document.createElement('span');
+      typeSpan.className = 'sr-type';
+      typeSpan.textContent = r.type.toUpperCase();
+      div.appendChild(typeSpan);
+
+      var fullSpan = document.createElement('span');
+      fullSpan.className = 'sr-full';
+      fullSpan.textContent = r.name;
+      div.appendChild(fullSpan);
+
+      div.addEventListener('click', function() {
+        var lat = parseFloat(this.dataset.lat);
+        var lon = parseFloat(this.dataset.lon);
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 50000),
+          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-45), roll: 0 },
+          duration: 2.0,
+        });
+        addIntelItem('Search: flying to ' + this.querySelector('.sr-name').textContent);
+        closeSearch();
+      });
+      results.appendChild(div);
+    }
+  } catch (e) { /* silent */ }
+}
+
+// ===== LAYER TOGGLES =====
+function toggleLayer(layer, enabled) {
+  layerState[layer] = enabled;
+  var id;
+  if (layer === 'satellites') {
+    for (id in satEntities) { satEntities[id].show = enabled; }
+    if (enabled) loadSatellites();
+  }
+  if (layer === 'orbits') {
+    if (enabled) { loadOrbitPaths(); }
+    else { clearOrbitPolylines(); }
+  }
+  if (layer === 'flights') {
+    for (id in flightEntities) { flightEntities[id].show = enabled; }
+    if (enabled) { loadFlights(); addIntelItem('Aircraft layer enabled'); }
+  }
+  if (layer === 'military') {
+    for (id in milEntities) { milEntities[id].show = enabled; }
+    if (enabled) { loadMilitaryFlights(); addIntelItem('Military layer enabled'); }
+  }
+  if (layer === 'quakes') {
+    for (id in quakeEntities) { quakeEntities[id].show = enabled; }
+    if (enabled) loadEarthquakes();
+  }
+  if (layer === 'conjunctions') {
+    for (id in conjEntities) { conjEntities[id].show = enabled; }
+    if (enabled && conjEvents.length > 0) renderConjunctionsOnGlobe(conjEvents);
+  }
+  if (layer === 'traffic') {
+    if (enabled) { loadTraffic(); addIntelItem('Traffic simulation enabled'); }
+    else { clearTraffic(); }
+  }
+  if (layer === 'cctv') {
+    $('cctv-panel').style.display = enabled ? '' : 'none';
+    for (id in cctvEntities) { cctvEntities[id].show = enabled; }
+    if (enabled) { loadCCTV(); addIntelItem('CCTV layer enabled'); }
+  }
+  updateLayerStatus();
+  if (viewer) viewer.scene.requestRender();
+}
+
+function updateLayerStatus() {
+  var active = [];
+  if (layerState.satellites) active.push('SAT');
+  if (layerState.orbits) active.push('ORB');
+  if (layerState.flights) active.push('AIR');
+  if (layerState.military) active.push('MIL');
+  if (layerState.quakes) active.push('SEI');
+  if (layerState.conjunctions) active.push('CONJ');
+  if (layerState.traffic) active.push('TRF');
+  if (layerState.cctv) active.push('CAM');
+  $('layer-status').textContent = 'LAYERS: ' + active.join(' ');
+}
+
+// ===== HUD UPDATES =====
+function updateClock() {
+  $('utc-clock').textContent = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+
+function updateStatusBar() {
+  if (!viewer) return;
+  var carto = viewer.camera.positionCartographic;
+  if (carto) {
+    var lat = Cesium.Math.toDegrees(carto.latitude);
+    var lon = Cesium.Math.toDegrees(carto.longitude);
+    var alt = carto.height / 1000;
+    $('coords').textContent = 'LAT: ' + lat.toFixed(4) + ' LON: ' + lon.toFixed(4);
+    $('cam-alt').textContent = 'ALT: ' + (alt > 1000 ? (alt/1000).toFixed(1) + ' Mm' : alt.toFixed(0) + ' km');
+  }
+}
+
+var frameCount = 0;
+var lastFpsTime = performance.now();
+function updateFPS() {
+  frameCount++;
+  var now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    $('fps-display').textContent = 'FPS: ' + frameCount;
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
+
+// ===== EVENT LISTENERS =====
+function setupEventListeners() {
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(function(btn) {
+    btn.addEventListener('click', function() { setViewMode(btn.dataset.mode); });
+  });
+  document.querySelectorAll('.preset-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { flyToPreset(btn.dataset.preset); });
+  });
+
+  $('btn-detect-sparse').addEventListener('click', function() { toggleDetection('sparse'); });
+  $('btn-detect-full').addEventListener('click', function() { toggleDetection('full'); });
+
+  var layerMap = {
+    'layer-satellites': 'satellites', 'layer-orbits': 'orbits', 'layer-flights': 'flights',
+    'layer-military': 'military', 'layer-quakes': 'quakes', 'layer-conjunctions': 'conjunctions',
+    'layer-traffic': 'traffic', 'layer-cctv': 'cctv',
+  };
+  for (var elId in layerMap) {
+    (function(id, layer) {
+      $(id).addEventListener('change', function() { toggleLayer(layer, this.checked); });
+    })(elId, layerMap[elId]);
+  }
+
+  ['fx-bloom', 'fx-sharpen', 'fx-sensitivity', 'fx-pixelate'].forEach(function(id) {
+    $(id).addEventListener('input', updatePostProcessing);
+  });
+
+  document.querySelectorAll('[data-cctv-city]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-cctv-city]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      loadCCTV(btn.dataset.cctvCity);
+    });
+  });
+
+  $('cctv-close').addEventListener('click', function() { $('cctv-viewer').classList.remove('visible'); });
+  $('btn-analyze').addEventListener('click', runConjunctionAnalysis);
+  $('btn-dismiss').addEventListener('click', deselectEntity);
+  $('btn-help').addEventListener('click', function() { $('keyboard-help').classList.toggle('visible'); });
+
+  // Time control
+  $('time-play').addEventListener('click', togglePlayPause);
+  $('time-rw').addEventListener('click', function() { stepTime(-1); });
+  $('time-ff').addEventListener('click', function() { stepTime(1); });
+  $('time-live').addEventListener('click', goLive);
+  $('time-speed').addEventListener('change', function() {
+    timeState.speed = parseInt(this.value) || 60;
+  });
+  $('time-slider').addEventListener('input', function() {
+    if (timeState.windowStart) {
+      var offsetSec = parseInt(this.value) || 0;
+      var newEpoch = new Date(timeState.windowStart.getTime() + offsetSec * 1000);
+      timeState.live = false;
+      timeState.epoch = newEpoch;
+      updateTimeDisplay();
+      fetchSatellitesAtEpoch();
+    }
+  });
+
+  // Conjunction detail + Risk matrix
+  $('cd-close').addEventListener('click', closeConjunctionDetail);
+  $('rm-close').addEventListener('click', closeRiskMatrix);
+  $('btn-risk-matrix').addEventListener('click', function() {
+    renderRiskMatrix(conjEvents);
+  });
+
+  $('search-input').addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    var q = this.value;
+    searchTimeout = setTimeout(function() { doSearch(q); }, 300);
+  });
+  $('search-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeSearch();
+    if (e.key === 'Enter') {
+      var first = $('search-results').querySelector('.search-result');
+      if (first) first.click();
+    }
+  });
+
+  document.querySelectorAll('.panel h3').forEach(function(h3) {
+    h3.addEventListener('click', function(e) {
+      if (e.target.tagName === 'INPUT') return;
+      this.parentElement.classList.toggle('collapsed');
+    });
+  });
+
+  // ===== KEYBOARD SHORTCUTS =====
+  document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    switch(e.key) {
+      case '1': setViewMode('normal'); break;
+      case '2': setViewMode('crt'); break;
+      case '3': setViewMode('nvg'); break;
+      case '4': setViewMode('flir'); break;
+
+      case 's': case 'S':
+        $('layer-satellites').checked = !$('layer-satellites').checked;
+        toggleLayer('satellites', $('layer-satellites').checked); break;
+      case 'o': case 'O':
+        $('layer-orbits').checked = !$('layer-orbits').checked;
+        toggleLayer('orbits', $('layer-orbits').checked); break;
+      case 'f': case 'F':
+        $('layer-flights').checked = !$('layer-flights').checked;
+        toggleLayer('flights', $('layer-flights').checked); break;
+      case 'm': case 'M':
+        $('layer-military').checked = !$('layer-military').checked;
+        toggleLayer('military', $('layer-military').checked); break;
+      case 'q': case 'Q':
+        $('layer-quakes').checked = !$('layer-quakes').checked;
+        toggleLayer('quakes', $('layer-quakes').checked); break;
+      case 't': case 'T':
+        $('layer-traffic').checked = !$('layer-traffic').checked;
+        toggleLayer('traffic', $('layer-traffic').checked); break;
+      case 'j': case 'J':
+        $('layer-conjunctions').checked = !$('layer-conjunctions').checked;
+        toggleLayer('conjunctions', $('layer-conjunctions').checked); break;
+      case 'c': case 'C':
+        $('layer-cctv').checked = !$('layer-cctv').checked;
+        toggleLayer('cctv', $('layer-cctv').checked); break;
+      case ' ':
+        e.preventDefault(); togglePlayPause(); break;
+
+      case 'd': case 'D':
+        toggleDetection(detectionLevel === 'off' ? 'sparse' : (detectionLevel === 'sparse' ? 'full' : 'off'));
+        break;
+      case 'b': case 'B':
+        var bl = parseInt($('fx-bloom').value);
+        applyPostProcessing({
+          bloom: bl > 0 ? 0 : 50,
+          sharpen: parseInt($('fx-sharpen').value),
+          sensitivity: parseInt($('fx-sensitivity').value),
+          pixelate: parseInt($('fx-pixelate').value)
+        });
+        break;
+      case 'g': case 'G': flyToPreset('global'); break;
+      case '/': e.preventDefault(); openSearch(); break;
+      case '?': $('keyboard-help').classList.toggle('visible'); break;
+
+      case 'Escape':
+        if ($('search-box').classList.contains('visible')) { closeSearch(); }
+        else if ($('keyboard-help').classList.contains('visible')) { $('keyboard-help').classList.remove('visible'); }
+        else if ($('cctv-viewer').classList.contains('visible')) { $('cctv-viewer').classList.remove('visible'); }
+        else { deselectEntity(); }
+        break;
+    }
+  });
+}
+
+// ===== RISK COLORS =====
+var RISK_COLORS = {
+  CRITICAL: '#ff4040', HIGH: '#ff8800', MODERATE: '#ffc800',
+  LOW: '#00cc44', NEGLIGIBLE: '#666666'
+};
+
+var REGIME_COLORS = {
+  LEO: '#00d4ff', MEO: '#00ff88', GEO: '#ffd700', HEO: '#ff4466', UNKNOWN: '#888888'
+};
+
+// ===== CONJUNCTION GLOBE LAYER =====
+var conjEntities = {};
+var conjEvents = [];
+
+function renderConjunctionsOnGlobe(events) {
+  for (var cid in conjEntities) { viewer.entities.remove(conjEntities[cid]); }
+  conjEntities = {};
+  conjEvents = events;
+
+  if (!layerState.conjunctions || !events || events.length === 0) {
+    $('count-conj').textContent = '0';
+    return;
+  }
+  $('count-conj').textContent = events.length;
+
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    var riskColor = Cesium.Color.fromCssColorString(RISK_COLORS[ev.risk] || '#888');
+
+    if (ev.primary_lat !== undefined) {
+      var pid = 'conj-p-' + i;
+      conjEntities[pid] = viewer.entities.add({
+        id: pid,
+        position: Cesium.Cartesian3.fromDegrees(ev.primary_lon, ev.primary_lat, (ev.primary_alt_km || 400) * 1000),
+        point: {
+          pixelSize: ev.risk === 'CRITICAL' ? 12 : ev.risk === 'HIGH' ? 10 : 8,
+          color: riskColor, outlineColor: Cesium.Color.WHITE.withAlpha(0.5), outlineWidth: 2,
+        },
+        label: {
+          text: (ev.primary_name || String(ev.primary)) + '\n' + ev.risk,
+          font: '10px JetBrains Mono', fillColor: riskColor,
+          outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(14, -14),
+          showBackground: true, backgroundColor: Cesium.Color.BLACK.withAlpha(0.7),
+          scaleByDistance: new Cesium.NearFarScalar(1e6, 1, 1e8, 0.5),
+        },
+        properties: { type: 'conjunction', eventIndex: i }
+      });
+
+      if (ev.secondary_lat !== undefined) {
+        var lid = 'conj-line-' + i;
+        conjEntities[lid] = viewer.entities.add({
+          id: lid,
+          polyline: {
+            positions: [
+              Cesium.Cartesian3.fromDegrees(ev.primary_lon, ev.primary_lat, (ev.primary_alt_km || 400) * 1000),
+              Cesium.Cartesian3.fromDegrees(ev.secondary_lon, ev.secondary_lat, (ev.secondary_alt_km || 400) * 1000),
+            ],
+            width: ev.risk === 'CRITICAL' ? 3 : 2,
+            material: new Cesium.PolylineDashMaterialProperty({
+              color: riskColor.withAlpha(0.8), dashLength: 12,
+            }),
+          }
+        });
+
+        var sid = 'conj-s-' + i;
+        conjEntities[sid] = viewer.entities.add({
+          id: sid,
+          position: Cesium.Cartesian3.fromDegrees(ev.secondary_lon, ev.secondary_lat, (ev.secondary_alt_km || 400) * 1000),
+          point: {
+            pixelSize: ev.risk === 'CRITICAL' ? 10 : 8,
+            color: riskColor.withAlpha(0.7), outlineColor: Cesium.Color.WHITE.withAlpha(0.3), outlineWidth: 1,
+          },
+          label: {
+            text: ev.secondary_name || String(ev.secondary),
+            font: '9px JetBrains Mono', fillColor: riskColor.withAlpha(0.8),
+            outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(12, -10),
+            scaleByDistance: new Cesium.NearFarScalar(1e6, 1, 1e8, 0.4),
+          },
+          properties: { type: 'conjunction', eventIndex: i }
+        });
+      }
+
+      if (ev.risk === 'CRITICAL' || ev.risk === 'HIGH') {
+        var ringId = 'conj-ring-' + i;
+        var ringRadius = Math.max(50000, ev.miss_distance_km * 5000);
+        conjEntities[ringId] = viewer.entities.add({
+          id: ringId,
+          position: Cesium.Cartesian3.fromDegrees(ev.primary_lon, ev.primary_lat, (ev.primary_alt_km || 400) * 1000),
+          ellipsoid: {
+            radii: new Cesium.Cartesian3(ringRadius, ringRadius, ringRadius),
+            material: riskColor.withAlpha(0.08),
+            outline: true, outlineColor: riskColor.withAlpha(0.3), outlineWidth: 1,
+          }
+        });
+      }
+    }
+  }
+  viewer.scene.requestRender();
+}
+
+// ===== TIME SLIDER / EPOCH CONTROL =====
+var timeState = {
+  live: true, playing: false, epoch: new Date(), speed: 60,
+  lastTick: 0, windowHours: 24, windowStart: null, _lastFetch: 0,
+};
+
+function initTimeSlider() {
+  timeState.epoch = new Date();
+  timeState.windowStart = new Date(timeState.epoch.getTime() - 12 * 3600000);
+  timeState.windowHours = 24;
+  updateTimeDisplay();
+}
+
+function updateTimeDisplay() {
+  var dt = timeState.epoch;
+  $('time-display').textContent = dt.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  if (timeState.windowStart) {
+    var elapsed = (dt.getTime() - timeState.windowStart.getTime()) / 1000;
+    var total = timeState.windowHours * 3600;
+    $('time-slider').max = total;
+    $('time-slider').value = Math.max(0, Math.min(total, elapsed));
+  }
+  var badge = $('time-live');
+  if (timeState.live) {
+    badge.classList.remove('inactive');
+    badge.textContent = 'LIVE';
+  } else {
+    badge.classList.add('inactive');
+    badge.textContent = 'HIST';
+  }
+}
+
+function goLive() {
+  timeState.live = true;
+  timeState.playing = false;
+  timeState.epoch = new Date();
+  var playBtn = $('time-play');
+  playBtn.textContent = '\u25B6';
+  playBtn.classList.remove('active');
+  updateTimeDisplay();
+  loadSatellites();
+}
+
+function togglePlayPause() {
+  var playBtn = $('time-play');
+  if (timeState.playing) {
+    timeState.playing = false;
+    playBtn.textContent = '\u25B6';
+    playBtn.classList.remove('active');
+  } else {
+    timeState.playing = true;
+    timeState.live = false;
+    playBtn.textContent = '\u23F8';
+    playBtn.classList.add('active');
+    timeState.lastTick = performance.now();
+    tickTime();
+  }
+}
+
+function tickTime() {
+  if (!timeState.playing) return;
+  var now = performance.now();
+  var dt = (now - timeState.lastTick) / 1000;
+  timeState.lastTick = now;
+  timeState.epoch = new Date(timeState.epoch.getTime() + dt * timeState.speed * 1000);
+  updateTimeDisplay();
+  if (now - timeState._lastFetch > 500) {
+    timeState._lastFetch = now;
+    fetchSatellitesAtEpoch();
+  }
+  requestAnimationFrame(tickTime);
+}
+
+function stepTime(hours) {
+  timeState.live = false;
+  timeState.epoch = new Date(timeState.epoch.getTime() + hours * 3600000);
+  updateTimeDisplay();
+  fetchSatellitesAtEpoch();
+}
+
+async function fetchSatellitesAtEpoch() {
+  if (timeState.live) return;
+  try {
+    var epochStr = timeState.epoch.toISOString();
+    var resp = await fetch(API + '/api/satellite-positions?epoch=' + encodeURIComponent(epochStr));
+    if (!resp.ok) return;
+    var data = await resp.json();
+    updateSatEntities(data.satellites || []);
+  } catch (e) { /* silent */ }
+}
+
+// ===== ORBIT REGIME COLOR CODING =====
+function getRegimeColor(sat) {
+  if (sat.regime_color) return Cesium.Color.fromCssColorString(sat.regime_color);
+  var alt = sat.alt_km || 0;
+  if (alt < 2000) return Cesium.Color.fromCssColorString(REGIME_COLORS.LEO);
+  if (alt < 35786) return Cesium.Color.fromCssColorString(REGIME_COLORS.MEO);
+  if (alt < 35800) return Cesium.Color.fromCssColorString(REGIME_COLORS.GEO);
+  return Cesium.Color.fromCssColorString(REGIME_COLORS.HEO);
+}
+
+function getRegimeName(sat) {
+  if (sat.regime) return sat.regime;
+  var alt = sat.alt_km || 0;
+  if (alt < 2000) return 'LEO';
+  if (alt < 35786) return 'MEO';
+  if (alt < 35800) return 'GEO';
+  return 'HEO';
+}
+
+function updateSatEntities(sats) {
+  if (!layerState.satellites) return;
+  $('count-sat').textContent = sats.length;
+  $('stat-sat').textContent = 'SAT: ' + sats.length;
+
+  var currentIds = new Set();
+  for (var i = 0; i < sats.length; i++) {
+    var sat = sats[i];
+    currentIds.add(String(sat.norad_id));
+    var id = 'sat-' + sat.norad_id;
+    var color = getRegimeColor(sat);
+    var regime = getRegimeName(sat);
+
+    if (satEntities[id]) {
+      satEntities[id].position = Cesium.Cartesian3.fromDegrees(sat.lon, sat.lat, sat.alt_km * 1000);
+      satEntities[id].point.color = color;
+      satEntities[id].point.outlineColor = Cesium.Color.fromAlpha(color, 0.3);
+      satEntities[id].label.fillColor = color;
+    } else {
+      var showLabel = detectionLevel === 'full' || (detectionLevel === 'sparse' && i % 5 === 0);
+      satEntities[id] = viewer.entities.add({
+        id: id, name: sat.name,
+        position: Cesium.Cartesian3.fromDegrees(sat.lon, sat.lat, sat.alt_km * 1000),
+        point: {
+          pixelSize: detectionMode ? 7 : 5, color: color,
+          outlineColor: Cesium.Color.fromAlpha(color, 0.3), outlineWidth: detectionMode ? 3 : 2,
+        },
+        label: {
+          text: detectionMode ? (sat.name + '\n' + sat.norad_id + ' ' + regime) : sat.name,
+          font: (detectionMode ? '11px' : '10px') + ' JetBrains Mono',
+          fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(10, -10),
+          scaleByDistance: new Cesium.NearFarScalar(1e6, 1, 1e8, 0.4),
+          translucencyByDistance: detectionMode
+            ? new Cesium.NearFarScalar(1e6, 1, 1e8, 0.8)
+            : new Cesium.NearFarScalar(1e7, 1, 5e7, 0.5),
+          showBackground: detectionMode,
+          backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
+          show: detectionMode ? showLabel : true,
+        },
+        properties: {
+          type: 'satellite', norad_id: sat.norad_id,
+          alt_km: sat.alt_km, velocity: sat.velocity_km_s, regime: regime,
+        }
+      });
+    }
+  }
+  for (var eid in satEntities) {
+    if (!currentIds.has(eid.replace('sat-', ''))) {
+      viewer.entities.remove(satEntities[eid]);
+      delete satEntities[eid];
+    }
+  }
+  viewer.scene.requestRender();
+}
+
+// ===== CONJUNCTION DETAIL PANEL =====
+function openConjunctionDetail(eventData) {
+  var panel = $('conj-detail');
+  panel.classList.add('visible');
+  var stats = $('cd-stats');
+  stats.replaceChildren();
+
+  var riskColor = RISK_COLORS[eventData.risk] || '#888';
+  var statItems = [
+    { label: 'RISK', value: eventData.risk, color: riskColor },
+    { label: 'MISS DIST', value: eventData.miss_distance_km.toFixed(3) + ' km', color: 'var(--hud-color)' },
+    { label: 'REL VEL', value: eventData.relative_velocity_km_s.toFixed(2) + ' km/s', color: 'var(--hud-color)' },
+    { label: 'Pc', value: eventData.pc ? eventData.pc.toExponential(2) : 'N/A', color: riskColor },
+    { label: 'PRIMARY', value: eventData.primary_name || String(eventData.primary), color: '#00d4ff' },
+    { label: 'SECONDARY', value: eventData.secondary_name || String(eventData.secondary), color: '#00d4ff' },
+  ];
+
+  for (var i = 0; i < statItems.length; i++) {
+    var box = document.createElement('div');
+    box.className = 'cd-stat-box';
+    var lbl = document.createElement('div');
+    lbl.className = 'cd-stat-label';
+    lbl.textContent = statItems[i].label;
+    var val = document.createElement('div');
+    val.className = 'cd-stat-value';
+    val.textContent = statItems[i].value;
+    val.style.color = statItems[i].color;
+    val.style.fontSize = statItems[i].label === 'RISK' ? '16px' : '11px';
+    box.appendChild(lbl);
+    box.appendChild(val);
+    stats.appendChild(box);
+  }
+  renderBPlaneChart(eventData);
+  renderPcEvolutionChart(eventData);
+}
+
+function closeConjunctionDetail() {
+  $('conj-detail').classList.remove('visible');
+}
+
+function renderBPlaneChart(eventData) {
+  var bx = eventData.bplane_x_km || 0;
+  var by = eventData.bplane_y_km || 0;
+  var sigma = eventData.sigma_combined_km || 0.5;
+  var hbr = eventData.hard_body_radius_km || 0.01;
+
+  var e1x = [], e1y = [], e3x = [], e3y = [], hbrX = [], hbrY = [];
+  for (var t = 0; t <= 360; t += 5) {
+    var rad = t * Math.PI / 180;
+    e1x.push(sigma * Math.cos(rad)); e1y.push(sigma * Math.sin(rad));
+    e3x.push(3 * sigma * Math.cos(rad)); e3y.push(3 * sigma * Math.sin(rad));
+    hbrX.push(bx + hbr * Math.cos(rad)); hbrY.push(by + hbr * Math.sin(rad));
+  }
+
+  Plotly.newPlot('cd-bplane', [
+    { x: e3x, y: e3y, mode: 'lines', name: '3\u03C3',
+      line: { color: 'rgba(255,176,0,0.2)', width: 1, dash: 'dot' }, hoverinfo: 'skip' },
+    { x: e1x, y: e1y, mode: 'lines', name: '1\u03C3',
+      line: { color: 'rgba(255,176,0,0.5)', width: 1 }, hoverinfo: 'skip' },
+    { x: hbrX, y: hbrY, mode: 'lines', name: 'HBR (' + (hbr * 1000).toFixed(0) + 'm)',
+      line: { color: '#ff4040', width: 2 }, hoverinfo: 'skip' },
+    { x: [0], y: [0], mode: 'markers', name: 'Primary',
+      marker: { color: '#00d4ff', size: 8, symbol: 'cross' } },
+    { x: [bx], y: [by], mode: 'markers', name: 'Secondary',
+      marker: { color: RISK_COLORS[eventData.risk] || '#ff8800', size: 10, symbol: 'diamond' },
+      text: ['Miss: ' + eventData.miss_distance_km.toFixed(3) + ' km'], hoverinfo: 'text' },
+    { x: [0, bx], y: [0, by], mode: 'lines', showlegend: false,
+      line: { color: '#ff4040', width: 1, dash: 'dash' }, hoverinfo: 'skip' },
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(10,10,30,0.8)',
+    font: { family: 'JetBrains Mono', color: '#ffb000', size: 9 },
+    xaxis: { title: 'B\u00b7R (km)', color: '#7a5500', gridcolor: 'rgba(255,176,0,0.08)',
+      zerolinecolor: 'rgba(255,176,0,0.15)', scaleanchor: 'y' },
+    yaxis: { title: 'B\u00b7T (km)', color: '#7a5500', gridcolor: 'rgba(255,176,0,0.08)',
+      zerolinecolor: 'rgba(255,176,0,0.15)' },
+    legend: { font: { size: 8 }, bgcolor: 'rgba(0,0,0,0.5)', x: 0, y: 1 },
+    margin: { l: 50, r: 10, t: 10, b: 40 },
+  }, { responsive: true, displayModeBar: false });
+}
+
+function renderPcEvolutionChart(eventData) {
+  var history = eventData.pc_history || [];
+  if (history.length === 0) {
+    var basePc = eventData.pc || 1e-6;
+    var hrs = [72, 48, 36, 24, 18, 12, 6, 3, 1, 0];
+    for (var i = 0; i < hrs.length; i++) {
+      var noise = 1 + (Math.random() - 0.5) * 0.8 * (hrs[i] / 72);
+      history.push({ hours_before_tca: hrs[i], pc: Math.max(1e-12, basePc * noise * (0.3 + 0.7 * Math.exp(-hrs[i] / 24))) });
+    }
+    history.sort(function(a, b) { return b.hours_before_tca - a.hours_before_tca; });
+  }
+
+  var x = history.map(function(h) { return -h.hours_before_tca; });
+  var y = history.map(function(h) { return h.pc; });
+
+  Plotly.newPlot('cd-pc-trend', [
+    { x: x, y: y, mode: 'lines+markers', name: 'Pc',
+      line: { color: '#ff8800', width: 2 }, marker: { color: '#ff8800', size: 5 } },
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(10,10,30,0.8)',
+    font: { family: 'JetBrains Mono', color: '#ffb000', size: 9 },
+    xaxis: { title: 'Hours to TCA', color: '#7a5500', gridcolor: 'rgba(255,176,0,0.08)' },
+    yaxis: { title: 'Pc', type: 'log', color: '#7a5500', gridcolor: 'rgba(255,176,0,0.08)', exponentformat: 'e' },
+    shapes: [
+      { type: 'line', x0: x[0], x1: x[x.length-1], y0: 1e-4, y1: 1e-4,
+        line: { color: '#ff4040', width: 1, dash: 'dash' } },
+      { type: 'line', x0: x[0], x1: x[x.length-1], y0: 1e-5, y1: 1e-5,
+        line: { color: '#ffc800', width: 1, dash: 'dash' } },
+    ],
+    margin: { l: 55, r: 10, t: 10, b: 40 },
+  }, { responsive: true, displayModeBar: false });
+}
+
+// ===== TIMELINE STRIP =====
+function updateTimelineStrip(events) {
+  var strip = $('timeline-strip');
+  var track = $('tl-track');
+  if (!events || events.length === 0) { strip.classList.remove('visible'); return; }
+  strip.classList.add('visible');
+  track.replaceChildren();
+
+  var now = timeState.epoch.getTime();
+  var windowMs = timeState.windowHours * 3600000;
+  var start = now, end = now + windowMs;
+
+  var nowLine = document.createElement('div');
+  nowLine.className = 'tl-now';
+  nowLine.style.left = '0%';
+  track.appendChild(nowLine);
+
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    var tcaMs = new Date(ev.tca).getTime();
+    var pct = ((tcaMs - start) / (end - start)) * 100;
+    if (pct < -5 || pct > 105) continue;
+    pct = Math.max(0, Math.min(100, pct));
+
+    var marker = document.createElement('div');
+    marker.className = 'tl-marker risk-' + ev.risk;
+    marker.style.left = pct + '%';
+
+    var tip = document.createElement('div');
+    tip.className = 'tl-tooltip';
+    tip.textContent = (ev.primary_name || ev.primary) + ' / ' + (ev.secondary_name || ev.secondary) +
+      ' | ' + ev.risk + ' | ' + ev.miss_distance_km.toFixed(3) + ' km';
+    marker.appendChild(tip);
+
+    marker.addEventListener('click', (function(d) {
+      return function() { openConjunctionDetail(d); };
+    })(ev));
+    track.appendChild(marker);
+  }
+}
+
+// ===== RISK MATRIX =====
+function renderRiskMatrix(events) {
+  $('risk-matrix').classList.add('visible');
+  var grid = $('rm-grid');
+  grid.replaceChildren();
+
+  var missLabels = ['<0.5', '<1', '<5', '<10', '10+'];
+  var velLabels = ['<2', '<5', '<10', '<15', '15+'];
+  var cellRisks = [
+    ['CRITICAL','CRITICAL','CRITICAL','CRITICAL','CRITICAL'],
+    ['HIGH','HIGH','HIGH','HIGH','HIGH'],
+    ['MODERATE','MODERATE','MODERATE','HIGH','HIGH'],
+    ['LOW','LOW','LOW','LOW','LOW'],
+    ['NEGLIGIBLE','NEGLIGIBLE','NEGLIGIBLE','NEGLIGIBLE','NEGLIGIBLE'],
+  ];
+  var cellBg = {
+    CRITICAL:'rgba(255,64,64,0.35)', HIGH:'rgba(255,136,0,0.3)',
+    MODERATE:'rgba(255,200,0,0.2)', LOW:'rgba(0,200,0,0.15)', NEGLIGIBLE:'rgba(100,100,100,0.1)'
+  };
+
+  var bins = [];
+  for (var r = 0; r < 5; r++) { bins[r] = []; for (var c = 0; c < 5; c++) bins[r][c] = 0; }
+  if (events) {
+    for (var e = 0; e < events.length; e++) {
+      var md = events[e].miss_distance_km, rv = events[e].relative_velocity_km_s;
+      var row = md < 0.5 ? 0 : md < 1 ? 1 : md < 5 ? 2 : md < 10 ? 3 : 4;
+      var col = rv < 2 ? 0 : rv < 5 ? 1 : rv < 10 ? 2 : rv < 15 ? 3 : 4;
+      bins[row][col]++;
+    }
+  }
+
+  var corner = document.createElement('div');
+  corner.className = 'rm-cell rm-cell-label'; corner.textContent = 'km\\v';
+  grid.appendChild(corner);
+  for (var vc = 0; vc < velLabels.length; vc++) {
+    var vh = document.createElement('div');
+    vh.className = 'rm-cell rm-cell-label'; vh.textContent = velLabels[vc];
+    grid.appendChild(vh);
+  }
+  for (var mr = 0; mr < missLabels.length; mr++) {
+    var rl = document.createElement('div');
+    rl.className = 'rm-cell rm-cell-label'; rl.textContent = missLabels[mr];
+    grid.appendChild(rl);
+    for (var mc = 0; mc < velLabels.length; mc++) {
+      var cell = document.createElement('div');
+      cell.className = 'rm-cell';
+      cell.style.background = cellBg[cellRisks[mr][mc]];
+      cell.style.color = RISK_COLORS[cellRisks[mr][mc]];
+      if (bins[mr][mc] > 0) { cell.textContent = bins[mr][mc]; cell.style.fontWeight = '700'; cell.style.fontSize = '11px'; }
+      grid.appendChild(cell);
+    }
+  }
+}
+
+function closeRiskMatrix() { $('risk-matrix').classList.remove('visible'); }
+
+// ===== CHECK FOR CESIUM ION TOKEN =====
+async function checkConfig() {
+  try {
+    var resp = await fetch(API + '/api/config');
+    if (!resp.ok) return;
+    var config = await resp.json();
+    if (config.cesium_ion_token) {
+      Cesium.Ion.defaultAccessToken = config.cesium_ion_token;
+      try {
+        viewer.terrainProvider = await Cesium.CesiumTerrainProvider.fromIonAssetId(1);
+        addIntelItem('Cesium Ion terrain loaded');
+      } catch (e) { /* terrain not available */ }
+    }
+  } catch (e) { /* no config endpoint */ }
+}
+
+// ===== MAIN INIT =====
+async function init() {
+  try {
+    initCesium();
+    setupEventListeners();
+    initTimeSlider();
+    updateLayerStatus();
+
+    setLoadingProgress(40, 'LOADING DATA...');
+
+    // Load config and satellite data in parallel — globe is already visible
+    await Promise.all([
+      checkConfig(),
+      loadSatellites(),
+    ]);
+
+    setLoadingProgress(90, 'STARTING DATA FEEDS...');
+
+    // Orbits and earthquakes load on-demand when user enables the layer
+    // This matches how LeoLabs/keeptrack handle it — globe + dots first, detail on interaction
+
+    setInterval(loadSatellites, REFRESH_SATS_MS);
+    setInterval(function() { if (layerState.orbits) { orbitCacheDirty = true; loadOrbitPaths(); } }, 30000);
+    setInterval(function() { if (layerState.quakes) loadEarthquakes(); }, REFRESH_QUAKES_MS);
+    setInterval(function() { if (layerState.flights) loadFlights(); }, REFRESH_FLIGHTS_MS);
+    setInterval(function() { if (layerState.military) loadMilitaryFlights(); }, REFRESH_MIL_MS);
+    setInterval(function() { if (layerState.traffic) loadTraffic(); }, 10000);
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    viewer.scene.postRender.addEventListener(function() { updateStatusBar(); updateFPS(); });
+
+    // Re-render orbits on camera movement (debounced)
+    var orbitRenderTimeout = null;
+    viewer.camera.moveEnd.addEventListener(function() {
+      if (!layerState.orbits || orbitCache.length === 0) return;
+      clearTimeout(orbitRenderTimeout);
+      orbitRenderTimeout = setTimeout(renderVisibleOrbits, 300);
+    });
+
+    // Request a render after data loads (needed with requestRenderMode)
+    viewer.scene.requestRender();
+
+    setLoadingProgress(100, 'SYSTEMS ONLINE');
+    addIntelItem('WorldView v2.0 initialized \u2014 all systems operational');
+    addIntelItem('Keys: 1-4 modes, S/F/M/Q/J layers, SPACE play/pause, D detect, / search, ? help');
+    setTimeout(hideLoading, 600);
+  } catch (e) {
+    setLoadingProgress(0, 'INIT FAILED: ' + e.message);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

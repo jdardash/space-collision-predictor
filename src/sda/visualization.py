@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import plotly.graph_objects as go
 
-from sda.models import TLERecord, ConjunctionEvent, StateVector
+from sda.constants import EARTH_RADIUS_KM
+from sda.models import ConjunctionEvent
 from sda.propagator import propagate_window_numpy
 from sda.tle_store import TLEStore
-
-
-EARTH_RADIUS_KM = 6371.0
 
 # Color palette for orbits
 ORBIT_COLORS = [
@@ -43,8 +41,13 @@ def plot_orbit_trace(
     positions: np.ndarray,
     name: str,
     color: str,
+    norad_id: int | None = None,
 ) -> go.Scatter3d:
     """Create a 3D line trace for an orbit path."""
+    n = len(positions)
+    altitudes = np.sqrt(np.sum(positions ** 2, axis=1)) - EARTH_RADIUS_KM
+    # customdata: [name, norad_id, altitude] for click handler
+    cdata = [[name, norad_id or 0, round(float(altitudes[i]), 1)] for i in range(n)]
     return go.Scatter3d(
         x=positions[:, 0],
         y=positions[:, 1],
@@ -52,7 +55,81 @@ def plot_orbit_trace(
         mode="lines",
         name=name,
         line=dict(color=color, width=2),
-        hovertemplate=f"{name}<br>X: %{{x:.1f}} km<br>Y: %{{y:.1f}} km<br>Z: %{{z:.1f}} km<extra></extra>",
+        customdata=cdata,
+        hovertemplate=(
+            f"{name}<br>"
+            "Alt: %{customdata[2]:.1f} km<br>"
+            "X: %{x:.1f} km<br>Y: %{y:.1f} km<br>Z: %{z:.1f} km<extra></extra>"
+        ),
+    )
+
+
+def plot_screening_volume(
+    positions: np.ndarray,
+    threshold_km: float,
+    name: str,
+    color: str,
+) -> go.Scatter3d:
+    """Create a translucent tube around an orbit path representing the screening volume.
+
+    The screening volume is a cylinder of radius threshold_km centered on the orbit.
+    We approximate it by sampling circles perpendicular to the velocity vector.
+    """
+    # Sample every 10th position to reduce polygon count
+    step = max(1, len(positions) // 40)
+    sampled = positions[::step]
+
+    if len(sampled) < 3:
+        return go.Scatter3d(x=[], y=[], z=[], mode="lines", showlegend=False)
+
+    # Generate tube surface points
+    n_circle = 8  # points per cross-section circle
+    all_x, all_y, all_z = [], [], []
+
+    for i in range(len(sampled)):
+        pos = sampled[i]
+
+        # Velocity direction (forward difference)
+        if i < len(sampled) - 1:
+            tangent = sampled[i + 1] - sampled[i]
+        else:
+            tangent = sampled[i] - sampled[i - 1]
+
+        t_norm = np.linalg.norm(tangent)
+        if t_norm < 1e-10:
+            continue
+        tangent = tangent / t_norm
+
+        # Build perpendicular basis
+        arb = np.array([1.0, 0.0, 0.0]) if abs(tangent[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+
+        n1 = np.cross(tangent, arb)
+        n1 /= np.linalg.norm(n1)
+        n2 = np.cross(tangent, n1)
+
+        # Circle points
+        for j in range(n_circle + 1):
+            theta = 2 * np.pi * j / n_circle
+            point = pos + threshold_km * (np.cos(theta) * n1 + np.sin(theta) * n2)
+            all_x.append(point[0])
+            all_y.append(point[1])
+            all_z.append(point[2])
+
+        # Add None to break the line between circles (creates wireframe effect)
+        all_x.append(None)
+        all_y.append(None)
+        all_z.append(None)
+
+    return go.Scatter3d(
+        x=all_x,
+        y=all_y,
+        z=all_z,
+        mode="lines",
+        name=f"Screen: {name} ({threshold_km} km)",
+        line=dict(color=color, width=1),
+        opacity=0.15,
+        showlegend=True,
+        hoverinfo="skip",
     )
 
 
@@ -64,6 +141,20 @@ def plot_conjunction_marker(
     """Create markers and a miss-distance line at TCA."""
     traces = []
 
+    pc_text = ""
+    if event.collision_probability is not None:
+        pc_text = f"<br>Pc: {event.collision_probability.probability:.2e}"
+
+    # customdata for click: [type, primary_name, secondary_name, risk, miss_km]
+    cdata_row = [
+        "conjunction",
+        event.primary_name,
+        event.secondary_name,
+        event.risk.value,
+        event.miss_distance_km,
+    ]
+    conj_cdata = [cdata_row, cdata_row]
+
     # Markers at TCA positions
     traces.append(go.Scatter3d(
         x=[pos_primary[0], pos_secondary[0]],
@@ -72,10 +163,13 @@ def plot_conjunction_marker(
         mode="markers",
         marker=dict(size=6, color="red", symbol="diamond"),
         name=f"TCA: {event.primary_name} / {event.secondary_name}",
+        customdata=conj_cdata,
         hovertemplate=(
+            f"<b>CONJUNCTION EVENT</b><br>"
             f"TCA: {event.tca.strftime('%Y-%m-%d %H:%M:%S')} UTC<br>"
             f"Miss: {event.miss_distance_km:.3f} km<br>"
-            f"Risk: {event.risk.value}<extra></extra>"
+            f"Risk: {event.risk.value}{pc_text}<br>"
+            "<i>Click for details</i><extra></extra>"
         ),
     ))
 
@@ -99,10 +193,12 @@ def build_conjunction_figure(
     store: TLEStore,
     hours: float = 24.0,
     start: datetime | None = None,
+    show_screening_volumes: bool = True,
+    screening_threshold_km: float = 10.0,
 ) -> go.Figure:
     """Build a complete 3D visualization of orbits and conjunctions."""
     if start is None:
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
 
     fig = go.Figure()
 
@@ -132,7 +228,14 @@ def build_conjunction_figure(
 
         orbit_data[norad_id] = positions
         color = ORBIT_COLORS[i % len(ORBIT_COLORS)]
-        fig.add_trace(plot_orbit_trace(positions, tle.name, color))
+        fig.add_trace(plot_orbit_trace(positions, tle.name, color, norad_id))
+
+        # Add screening volume for satellites involved in conjunctions
+        involved = {e.primary for e in events} | {e.secondary for e in events}
+        if show_screening_volumes and norad_id in involved:
+            fig.add_trace(plot_screening_volume(
+                positions, screening_threshold_km, tle.name, color
+            ))
 
     # Plot conjunction markers
     for event in events:
@@ -141,7 +244,7 @@ def build_conjunction_figure(
         if tle_a is None or tle_b is None:
             continue
 
-        from sda.propagator import propagate_at, build_satrec
+        from sda.propagator import build_satrec, propagate_at
         try:
             sv_a = propagate_at(build_satrec(tle_a), event.tca)
             sv_b = propagate_at(build_satrec(tle_b), event.tca)
@@ -151,16 +254,21 @@ def build_conjunction_figure(
             continue
 
     # Layout
-    max_range = 10000
     fig.update_layout(
         title=dict(
             text="Space-Domain Awareness — Conjunction Visualization",
             font=dict(color="white", size=16),
         ),
         scene=dict(
-            xaxis=dict(title="X (km)", color="white", backgroundcolor="#0a0a2e", gridcolor="#1a1a4e"),
-            yaxis=dict(title="Y (km)", color="white", backgroundcolor="#0a0a2e", gridcolor="#1a1a4e"),
-            zaxis=dict(title="Z (km)", color="white", backgroundcolor="#0a0a2e", gridcolor="#1a1a4e"),
+            xaxis=dict(
+                title="X (km)", color="white", backgroundcolor="#0a0a2e", gridcolor="#1a1a4e"
+            ),
+            yaxis=dict(
+                title="Y (km)", color="white", backgroundcolor="#0a0a2e", gridcolor="#1a1a4e"
+            ),
+            zaxis=dict(
+                title="Z (km)", color="white", backgroundcolor="#0a0a2e", gridcolor="#1a1a4e"
+            ),
             aspectmode="data",
             bgcolor="#0a0a2e",
         ),
@@ -173,6 +281,57 @@ def build_conjunction_figure(
     return fig
 
 
+_CLICK_HANDLER_JS = """
+<script>
+(function() {
+  // Wait for Plotly to render, then attach click handlers
+  var plotEl = document.querySelector('.plotly-graph-div');
+  if (!plotEl) {
+    // Retry after Plotly finishes rendering
+    setTimeout(arguments.callee, 500);
+    return;
+  }
+
+  plotEl.on('plotly_click', function(data) {
+    if (!data || !data.points || data.points.length === 0) return;
+    var pt = data.points[0];
+    var cd = pt.customdata;
+    if (!cd) return;
+
+    if (cd[0] === 'conjunction') {
+      // Conjunction marker clicked — notify parent
+      window.parent.postMessage({
+        action: 'conjClick',
+        primary: cd[1],
+        secondary: cd[2]
+      }, '*');
+    } else {
+      // Orbit trace clicked — notify parent with satellite name
+      window.parent.postMessage({
+        action: 'satClick',
+        name: cd[0]
+      }, '*');
+    }
+  });
+
+  // Listen for highlight requests from parent dashboard
+  window.addEventListener('message', function(e) {
+    if (!e.data || e.data.action !== 'highlight') return;
+    var name = e.data.name;
+    // Find the trace index matching this satellite name and bold it
+    var traces = plotEl.data;
+    var updates = [];
+    for (var i = 0; i < traces.length; i++) {
+      if (traces[i].name === name && traces[i].mode === 'lines') {
+        Plotly.restyle(plotEl, {'line.width': 5, 'opacity': 1.0}, [i]);
+      }
+    }
+  });
+})();
+</script>
+"""
+
+
 def render_html(
     events: list[ConjunctionEvent],
     store: TLEStore,
@@ -181,4 +340,7 @@ def render_html(
 ) -> str:
     """Render the conjunction visualization as an HTML string."""
     fig = build_conjunction_figure(events, store, hours, start)
-    return fig.to_html(include_plotlyjs="cdn", full_html=True)
+    html: str = fig.to_html(include_plotlyjs="cdn", full_html=True)
+    # Inject click handler script before closing </body> tag
+    html = html.replace("</body>", _CLICK_HANDLER_JS + "</body>")
+    return html

@@ -1,12 +1,13 @@
 """Tests for collision probability computation."""
 
 import math
+
 import numpy as np
 
 from sda.probability import (
+    _bessel_i0,
     compute_collision_probability,
     compute_pc_for_conjunction,
-    _bessel_i0,
 )
 
 
