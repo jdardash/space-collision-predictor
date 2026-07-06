@@ -6,6 +6,7 @@
 <title>WorldView — SDA Intelligence Dashboard</title>
 <script>window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/';</script>
 <script src="https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/Cesium.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js" integrity="sha384-e6V1JVpc+kVNTxT0gEOla7yL4c92Romsw7itPoipfzHbEjzUwPhTv6oeVDMHHzqT" crossorigin="anonymous"></script>
 <link href="https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
@@ -119,13 +120,20 @@
   .panel {
     background: rgba(0,0,0,0.75); border: 1px solid rgba(255,176,0,0.12);
     border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; backdrop-filter: blur(8px);
+    transition: border-color 0.18s ease, background-color 0.18s ease;
   }
+  .panel:hover { border-color: rgba(255,176,0,0.28); }
   .panel h3 {
     font-size: 9px; letter-spacing: 3px; font-weight: 600; color: var(--hud-dim, #7a5500);
     margin-bottom: 8px; text-transform: uppercase;
     border-bottom: 1px solid rgba(255,176,0,0.08); padding-bottom: 4px;
     cursor: pointer; user-select: none;
+    transition: color 0.18s ease;
   }
+  .panel h3:hover { color: var(--hud-color, #ffb000); }
+  .panel h3::after { content: '\2212'; float: right; opacity: 0.7; }
+  .panel.collapsed h3::after { content: '+'; }
+  .panel.collapsed h3 { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
   .panel.collapsed .panel-body { display: none; }
   .mode-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
   .mode-btn {
@@ -140,7 +148,8 @@
   }
   .layer-toggle {
     display: flex; align-items: center; gap: 8px;
-    padding: 5px 0; cursor: pointer; font-size: 11px; transition: opacity 0.2s;
+    padding: 5px 0; cursor: pointer; font-size: 11px; opacity: 0.82;
+    transition: opacity 0.15s ease;
   }
   .layer-toggle:hover { opacity: 1; }
   .layer-toggle input[type="checkbox"] { accent-color: var(--hud-color, #ffb000); width: 12px; height: 12px; }
@@ -1005,8 +1014,7 @@ function initCesium() {
     infoBox: false,
     selectionIndicator: false,
     creditContainer: document.createElement('div'),
-    requestRenderMode: true,
-    maximumRenderTimeChange: 0.5,
+    requestRenderMode: false,
     targetFrameRate: 60,
     orderIndependentTranslucency: false,
     contextOptions: {
@@ -1049,12 +1057,31 @@ function initCesium() {
   var handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
   handler.setInputAction(function(click) {
     var picked = scene.pick(click.position);
-    if (Cesium.defined(picked) && Cesium.defined(picked.id)) {
+    if (Cesium.defined(picked) && picked.id && picked.id.type === 'satellite' && satEngine.active) {
+      selectSatellite(picked.id.noradId); // point primitive from the satellite engine
+    } else if (Cesium.defined(picked) && picked.id instanceof Cesium.Entity) {
       selectEntity(picked.id);
     } else {
       deselectEntity();
     }
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  // Hover handler: label + pointer cursor for the satellite under the mouse
+  var hoverLastPick = 0;
+  handler.setInputAction(function(move) {
+    if (!satEngine.active) return;
+    var now = performance.now();
+    if (now - hoverLastPick < 80) return; // scene.pick is a GPU readback; throttle
+    hoverLastPick = now;
+    var picked = scene.pick(move.endPosition);
+    var nid = (Cesium.defined(picked) && picked.id && picked.id.type === 'satellite')
+      ? picked.id.noradId : null;
+    if (nid !== satEngine.hoveredId) {
+      satEngine.hoveredId = nid;
+      scene.canvas.style.cursor = nid != null ? 'pointer' : 'default';
+      satEngine.lastLabelRebuild = 0; // rebuild labels next frame
+    }
+  }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
   setLoadingProgress(30, 'GLOBE ENGINE READY');
 }
@@ -1073,8 +1100,277 @@ function addIntelItem(msg) {
   while (feed.children.length > 30) feed.lastChild.remove();
 }
 
-// ===== SATELLITE LAYER (with orbit regime color coding) =====
+// ===== SATELLITE ENGINE (client-side SGP4 via satellite.js) =====
+// TLEs are fetched once and propagated in the browser every frame, so
+// satellite motion is continuous at render rate instead of jumping on a
+// 10 s server poll. Points live in a PointPrimitiveCollection (cheap);
+// labels live in a small LabelCollection rebuilt on a 400 ms cadence.
+var TLE_REFRESH_MS = 30 * 60 * 1000;
+var SAT_PT_SIZE = 4;
+var SAT_PT_SIZE_DETECT = 6;
+var SAT_PT_SIZE_SELECTED = 9;
+var LABEL_CAM_HEIGHT_M = 8.0e6;   // below this camera altitude, label nearby sats
+var LABEL_CAPS = { zoom: 60, sparse: 40, full: 150 };
+
+var satEngine = {
+  active: false,
+  sats: [],            // { noradId, name, regime, color, satrec, point, label, lastLat, lastLon, lastAlt, lastVel }
+  byNoradId: {},
+  points: null,        // Cesium.PointPrimitiveCollection
+  labels: null,        // Cesium.LabelCollection
+  cursor: 0,           // round-robin propagation index
+  batchDivisor: 3,     // propagate 1/3 of the catalog per frame (~20 Hz each at 60 FPS)
+  hoveredId: null,
+  selectedId: null,
+  lastLabelRebuild: 0,
+};
+var selectedOrbitEntity = null;
+
+function simNow() {
+  return timeState.live ? new Date() : new Date(timeState.epoch.getTime());
+}
+
+async function initSatEngine() {
+  if (typeof satellite === 'undefined') return false; // CDN blocked: fall back
+  try {
+    var resp = await fetch(API + '/api/tles');
+    if (!resp.ok) return false;
+    var data = await resp.json();
+    if (!(data.satellites || []).length) return false;
+
+    if (!satEngine.points) {
+      satEngine.points = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+      satEngine.labels = viewer.scene.primitives.add(new Cesium.LabelCollection());
+      viewer.scene.preUpdate.addEventListener(satEngineFrame);
+    }
+    buildSatCatalog(data.satellites);
+    satEngine.active = true;
+    $('count-sat').textContent = satEngine.sats.length;
+    $('stat-sat').textContent = 'SAT: ' + satEngine.sats.length;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function buildSatCatalog(list) {
+  clearSatSelection();
+  satEngine.hoveredId = null;
+  satEngine.points.removeAll();
+  satEngine.labels.removeAll();
+  satEngine.sats = [];
+  satEngine.byNoradId = {};
+  satEngine.cursor = 0;
+
+  for (var i = 0; i < list.length; i++) {
+    var rec = list[i];
+    var satrec;
+    try { satrec = satellite.twoline2satrec(rec.line1, rec.line2); } catch (e) { continue; }
+    if (!satrec) continue;
+    var color = Cesium.Color.fromCssColorString(rec.regime_color || '#00d4ff');
+    var s = {
+      noradId: rec.norad_id, name: rec.name, regime: rec.regime, color: color,
+      satrec: satrec, point: null, label: null,
+      lastLat: 0, lastLon: 0, lastAlt: 0, lastVel: 0,
+    };
+    s.point = satEngine.points.add({
+      position: Cesium.Cartesian3.fromDegrees(0, 0, 0),
+      show: false, // hidden until first propagation
+      pixelSize: detectionMode ? SAT_PT_SIZE_DETECT : SAT_PT_SIZE,
+      color: color,
+      outlineColor: Cesium.Color.fromAlpha(color, 0.6),
+      outlineWidth: 1,
+      translucencyByDistance: new Cesium.NearFarScalar(2.0e7, 1.0, 1.2e8, 0.45),
+      id: { type: 'satellite', noradId: rec.norad_id },
+    });
+    satEngine.sats.push(s);
+    satEngine.byNoradId[rec.norad_id] = s;
+  }
+}
+
+async function refreshTLEs() {
+  if (!satEngine.active) return;
+  try {
+    var resp = await fetch(API + '/api/tles');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    if ((data.satellites || []).length) {
+      buildSatCatalog(data.satellites);
+      addIntelItem('TLE catalog refreshed: ' + satEngine.sats.length + ' objects');
+    }
+  } catch (e) { /* keep current catalog */ }
+}
+
+function satEngineFrame() {
+  if (!satEngine.active || !layerState.satellites) return;
+  var sats = satEngine.sats;
+  var n = sats.length;
+  if (!n) return;
+
+  var when = simNow();
+  var gmst = satellite.gstime(when);
+  var batch = Math.ceil(n / satEngine.batchDivisor);
+  for (var k = 0; k < batch; k++) {
+    updateSatPosition(sats[(satEngine.cursor + k) % n], when, gmst);
+  }
+  satEngine.cursor = (satEngine.cursor + batch) % n;
+
+  var nowMs = performance.now();
+  if (nowMs - satEngine.lastLabelRebuild > 400) {
+    satEngine.lastLabelRebuild = nowMs;
+    rebuildSatLabels();
+  }
+}
+
+function updateSatPosition(s, when, gmst) {
+  var pv;
+  try { pv = satellite.propagate(s.satrec, when); } catch (e) { pv = null; }
+  if (!pv || !pv.position) { s.point.show = false; return; }
+  var gd = satellite.eciToGeodetic(pv.position, gmst);
+  s.lastLat = satellite.degreesLat(gd.latitude);
+  s.lastLon = satellite.degreesLong(gd.longitude);
+  s.lastAlt = gd.height; // km
+  if (pv.velocity) {
+    s.lastVel = Math.sqrt(
+      pv.velocity.x * pv.velocity.x + pv.velocity.y * pv.velocity.y + pv.velocity.z * pv.velocity.z
+    );
+  }
+  s.point.position = Cesium.Cartesian3.fromRadians(gd.longitude, gd.latitude, gd.height * 1000);
+  s.point.show = true;
+  if (s.label) s.label.position = s.point.position;
+}
+
+function rebuildSatLabels() {
+  var sats = satEngine.sats;
+  for (var i = 0; i < sats.length; i++) sats[i].label = null;
+  satEngine.labels.removeAll();
+  if (!layerState.satellites) return;
+
+  var cap;
+  if (detectionLevel === 'full') cap = LABEL_CAPS.full;
+  else if (detectionLevel === 'sparse') cap = LABEL_CAPS.sparse;
+  else {
+    var camH = viewer.camera.positionCartographic.height;
+    cap = camH < LABEL_CAM_HEIGHT_M ? LABEL_CAPS.zoom : 0;
+  }
+
+  var chosen = [];
+  if (cap > 0) {
+    var camPos = viewer.camera.positionCartographic;
+    var camLat = Cesium.Math.toDegrees(camPos.latitude);
+    var camLon = Cesium.Math.toDegrees(camPos.longitude);
+    var scored = [];
+    for (i = 0; i < sats.length; i++) {
+      var c = sats[i];
+      if (!c.point.show) continue;
+      var dLat = c.lastLat - camLat;
+      var dLon = ((c.lastLon - camLon + 540) % 360) - 180;
+      scored.push({ s: c, d: dLat * dLat + dLon * dLon });
+    }
+    scored.sort(function(a, b) { return a.d - b.d; });
+    for (i = 0; i < Math.min(cap, scored.length); i++) chosen.push(scored[i].s);
+  }
+
+  // Hovered and selected satellites are always labeled
+  var have = {};
+  for (i = 0; i < chosen.length; i++) have[chosen[i].noradId] = true;
+  [satEngine.hoveredId, satEngine.selectedId].forEach(function(nid) {
+    if (nid != null && !have[nid] && satEngine.byNoradId[nid]) {
+      chosen.push(satEngine.byNoradId[nid]);
+    }
+  });
+
+  for (i = 0; i < chosen.length; i++) {
+    var s = chosen[i];
+    var isFocus = s.noradId === satEngine.selectedId || s.noradId === satEngine.hoveredId;
+    s.label = satEngine.labels.add({
+      position: s.point.position,
+      text: s.name,
+      font: (isFocus ? '11px' : '10px') + ' JetBrains Mono',
+      fillColor: s.color,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 2,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      pixelOffset: new Cesium.Cartesian2(10, -8),
+      showBackground: isFocus || detectionMode,
+      backgroundColor: Cesium.Color.BLACK.withAlpha(0.55),
+      translucencyByDistance: new Cesium.NearFarScalar(1.0e7, 1.0, 6.0e7, 0.55),
+      id: { type: 'satellite', noradId: s.noradId },
+    });
+  }
+}
+
+function selectSatellite(noradId) {
+  var s = satEngine.byNoradId[noradId];
+  if (!s) return;
+  clearSatSelection();
+  satEngine.selectedId = noradId;
+  s.point.pixelSize = SAT_PT_SIZE_SELECTED;
+  s.point.outlineColor = Cesium.Color.WHITE.withAlpha(0.9);
+  s.point.outlineWidth = 2;
+
+  $('info-panel').classList.remove('hidden');
+  var info = $('entity-info');
+  info.replaceChildren();
+  info.appendChild(makeInfoRow('NAME', s.name));
+  info.appendChild(makeInfoRow('TYPE', 'SATELLITE'));
+  info.appendChild(makeInfoRow('NORAD ID', String(s.noradId)));
+  info.appendChild(makeInfoRow('ALTITUDE', (s.lastAlt || 0).toFixed(1) + ' km'));
+  info.appendChild(makeInfoRow('VELOCITY', (s.lastVel || 0).toFixed(3) + ' km/s'));
+  info.appendChild(makeInfoRow('REGIME', s.regime));
+
+  drawSelectedOrbit(s);
+  satEngine.lastLabelRebuild = 0;
+  viewer.camera.flyToBoundingSphere(
+    new Cesium.BoundingSphere(s.point.position, Math.max((s.lastAlt || 500) * 1500, 2.0e6)),
+    { duration: 1.0 }
+  );
+  addIntelItem('Tracking: ' + s.name);
+}
+
+function clearSatSelection() {
+  var prev = satEngine.selectedId != null ? satEngine.byNoradId[satEngine.selectedId] : null;
+  if (prev && prev.point) {
+    prev.point.pixelSize = detectionMode ? SAT_PT_SIZE_DETECT : SAT_PT_SIZE;
+    prev.point.outlineColor = Cesium.Color.fromAlpha(prev.color, 0.6);
+    prev.point.outlineWidth = 1;
+  }
+  satEngine.selectedId = null;
+  if (selectedOrbitEntity) {
+    viewer.entities.remove(selectedOrbitEntity);
+    selectedOrbitEntity = null;
+  }
+}
+
+function drawSelectedOrbit(s) {
+  var periodMin = (2 * Math.PI) / s.satrec.no; // satrec.no is rad/min
+  if (!isFinite(periodMin) || periodMin <= 0) return;
+  periodMin = Math.min(periodMin, 1500);
+  var nPts = 128;
+  var stepMs = periodMin * 60000 / nPts;
+  var start = simNow().getTime();
+  var positions = [];
+  for (var i = 0; i <= nPts; i++) {
+    var t = new Date(start + i * stepMs);
+    var pv;
+    try { pv = satellite.propagate(s.satrec, t); } catch (e) { continue; }
+    if (!pv || !pv.position) continue;
+    var gd = satellite.eciToGeodetic(pv.position, satellite.gstime(t));
+    positions.push(Cesium.Cartesian3.fromRadians(gd.longitude, gd.latitude, gd.height * 1000));
+  }
+  if (positions.length < 2) return;
+  selectedOrbitEntity = viewer.entities.add({
+    id: 'selected-orbit',
+    polyline: {
+      positions: positions, width: 1.5,
+      material: new Cesium.ColorMaterialProperty(Cesium.Color.fromAlpha(s.color, 0.45)),
+    }
+  });
+}
+
+// ===== SATELLITE LAYER (server-position fallback when the engine is off) =====
 async function loadSatellites() {
+  if (satEngine.active) return; // client-side engine owns the satellite layer
   if (!layerState.satellites) return;
   if (!timeState.live) return; // epoch mode uses fetchSatellitesAtEpoch
   try {
@@ -1720,6 +2016,8 @@ function selectEntity(entity) {
 
 function deselectEntity() {
   selectedEntity = null;
+  clearSatSelection();
+  satEngine.lastLabelRebuild = 0;
   $('info-panel').classList.add('hidden');
   viewer.trackedEntity = undefined;
 }
@@ -1763,6 +2061,14 @@ function toggleDetection(level) {
 }
 
 function refreshEntityVisuals() {
+  if (satEngine.active) {
+    for (var i = 0; i < satEngine.sats.length; i++) {
+      var es = satEngine.sats[i];
+      if (es.noradId === satEngine.selectedId) continue;
+      es.point.pixelSize = detectionMode ? SAT_PT_SIZE_DETECT : SAT_PT_SIZE;
+    }
+    satEngine.lastLabelRebuild = 0;
+  }
   for (var sid in satEntities) {
     var se = satEntities[sid];
     if (se.point) {
@@ -1935,8 +2241,14 @@ function toggleLayer(layer, enabled) {
   layerState[layer] = enabled;
   var id;
   if (layer === 'satellites') {
-    for (id in satEntities) { satEntities[id].show = enabled; }
-    if (enabled) loadSatellites();
+    if (satEngine.active) {
+      satEngine.points.show = enabled;
+      satEngine.labels.show = enabled;
+      if (!enabled) { clearSatSelection(); }
+    } else {
+      for (id in satEntities) { satEntities[id].show = enabled; }
+      if (enabled) loadSatellites();
+    }
   }
   if (layer === 'orbits') {
     if (enabled) { loadOrbitPaths(); }
@@ -2306,7 +2618,7 @@ function goLive() {
   playBtn.textContent = '\u25B6';
   playBtn.classList.remove('active');
   updateTimeDisplay();
-  loadSatellites();
+  if (!satEngine.active) loadSatellites();
 }
 
 function togglePlayPause() {
@@ -2332,7 +2644,9 @@ function tickTime() {
   timeState.lastTick = now;
   timeState.epoch = new Date(timeState.epoch.getTime() + dt * timeState.speed * 1000);
   updateTimeDisplay();
-  if (now - timeState._lastFetch > 500) {
+  // Client-side engine reads timeState.epoch directly every frame;
+  // only the server-position fallback needs to fetch.
+  if (!satEngine.active && now - timeState._lastFetch > 500) {
     timeState._lastFetch = now;
     fetchSatellitesAtEpoch();
   }
@@ -2347,7 +2661,7 @@ function stepTime(hours) {
 }
 
 async function fetchSatellitesAtEpoch() {
-  if (timeState.live) return;
+  if (timeState.live || satEngine.active) return;
   try {
     var epochStr = timeState.epoch.toISOString();
     var resp = await fetch(API + '/api/satellite-positions?epoch=' + encodeURIComponent(epochStr));
@@ -2415,7 +2729,9 @@ function updateSatEntities(sats) {
             : new Cesium.NearFarScalar(1e7, 1, 5e7, 0.5),
           showBackground: detectionMode,
           backgroundColor: Cesium.Color.BLACK.withAlpha(0.5),
-          show: detectionMode ? showLabel : true,
+          // Labels are opt-in (detection mode): 1400 always-on labels tanked
+          // the frame rate to ~1 FPS and made the globe unreadable.
+          show: detectionMode ? showLabel : false,
         },
         properties: {
           type: 'satellite', norad_id: sat.norad_id,
@@ -2671,6 +2987,17 @@ async function checkConfig() {
 }
 
 // ===== MAIN INIT =====
+async function startSatLayer() {
+  var engineOk = await initSatEngine();
+  if (engineOk) {
+    addIntelItem('Client-side SGP4 engine active: ' + satEngine.sats.length + ' objects propagated in-browser');
+    setInterval(refreshTLEs, TLE_REFRESH_MS);
+  } else {
+    addIntelItem('TLE engine unavailable; falling back to server positions');
+    await loadSatellites();
+  }
+}
+
 async function init() {
   try {
     initCesium();
@@ -2683,7 +3010,7 @@ async function init() {
     // Load config and satellite data in parallel — globe is already visible
     await Promise.all([
       checkConfig(),
-      loadSatellites(),
+      startSatLayer(),
     ]);
 
     setLoadingProgress(90, 'STARTING DATA FEEDS...');

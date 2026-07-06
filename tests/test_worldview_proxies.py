@@ -138,6 +138,39 @@ def test_military_flights_network_failure(monkeypatch):
     assert "error" in data
 
 
+# --- /api/tles ---
+
+ISS_TLE_TEXT = """ISS (ZARYA)
+1 25544U 98067A   24045.51782528  .00012516  00000+0  22596-3 0  9997
+2 25544  51.6412 210.9280 0004885 231.2372 247.0342 15.49584387440014"""
+
+
+def test_tles_returns_raw_lines_and_regime():
+    client.post("/tle", json={"tle_text": ISS_TLE_TEXT})
+    resp = client.get("/api/tles")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == len(data["satellites"]) >= 1
+
+    iss = next(s for s in data["satellites"] if s["norad_id"] == 25544)
+    assert iss["name"] == "ISS (ZARYA)"
+    assert iss["line1"].startswith("1 25544")
+    assert iss["line2"].startswith("2 25544")
+    # ISS is LEO: ~420 km semi-major-axis altitude
+    assert iss["regime"] == "LEO"
+    assert iss["regime_color"] == wv.REGIME_COLORS["LEO"]
+
+
+def test_tles_every_entry_has_complete_schema():
+    client.post("/tle", json={"tle_text": ISS_TLE_TEXT})
+    data = client.get("/api/tles").json()
+    for sat in data["satellites"]:
+        assert set(sat) == {
+            "norad_id", "name", "line1", "line2", "regime", "regime_color"
+        }
+        assert sat["regime"] in wv.REGIME_COLORS
+
+
 # --- /api/traffic ---
 
 OVERPASS_PAYLOAD = {

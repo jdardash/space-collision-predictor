@@ -13,6 +13,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
+from sda.constants import EARTH_MU_KM3_S2, EARTH_RADIUS_KM
 from sda.dashboard import DASHBOARD_HTML
 from sda.models import ConjunctionRequest
 from sda.propagator import build_satrec, datetime_to_jd, propagate_at
@@ -245,6 +246,45 @@ def satellite_positions(
         "count": len(satellites),
         "timestamp": now.isoformat(),
     }
+
+
+@router.get(
+    "/api/tles",
+    tags=["WorldView"],
+    summary="Raw TLE catalog for client-side propagation",
+)
+def tle_catalog():
+    """Return raw TLE lines plus orbit regime for every tracked satellite.
+
+    The WorldView frontend propagates these client-side with satellite.js
+    (WGS72 SGP4, matching the server) so satellite motion animates smoothly
+    without polling the server for positions. Regime is classified from mean
+    elements: semi-major-axis altitude derived from the Kozai mean motion,
+    plus TLE eccentricity.
+    """
+    from sda.api import store
+
+    satellites = []
+    for tle in store.get_all():
+        try:
+            satrec = build_satrec(tle)
+        except (RuntimeError, ValueError):
+            continue
+        n_rad_s = satrec.no_kozai / 60.0
+        if n_rad_s <= 0:
+            continue
+        a_km = (EARTH_MU_KM3_S2 / (n_rad_s ** 2)) ** (1.0 / 3.0)
+        regime = _classify_regime(a_km - EARTH_RADIUS_KM, satrec.ecco)
+        satellites.append({
+            "norad_id": tle.norad_id,
+            "name": tle.name,
+            "line1": tle.line1,
+            "line2": tle.line2,
+            "regime": regime,
+            "regime_color": REGIME_COLORS[regime],
+        })
+
+    return {"satellites": satellites, "count": len(satellites)}
 
 
 @router.get(
