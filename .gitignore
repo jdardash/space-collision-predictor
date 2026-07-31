@@ -21,6 +21,7 @@ preview.html
 
 # Local agent tooling and session notes (not part of the published project)
 .claude/
+CLAUDE.md
 .remember/
 docs/handoffs/
 docs/superpowers/
