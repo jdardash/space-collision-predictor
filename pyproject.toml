@@ -67,7 +67,10 @@ testpaths = ["tests"]
 addopts = "--tb=short"
 
 [tool.mypy]
-python_version = "3.11"
+# numpy's bundled stubs use PEP 695 `type` statements, which mypy rejects outright
+# under a pre-3.12 target. Runtime support is still 3.11+ (see requires-python and
+# the CI test matrix); ruff's py311 target guards against 3.12-only syntax.
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

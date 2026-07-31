@@ -25,5 +25,8 @@ preview.html
 docs/handoffs/
 docs/superpowers/
 uv.lock
-showcase-*.png
-worldview-after-*.png
+
+# Scratch capture drafts at the repo root. The published README assets live in
+# docs/ and are tracked -- keep this pattern root-scoped so it cannot swallow them.
+/showcase-*.png
+/worldview-after-*.png
