@@ -2,6 +2,10 @@
 
 **Satellite conjunction analysis engine**: SGP4 orbital propagation, two-phase collision screening, collision probability computation, maneuver planning, and interactive 3D visualization.
 
+**[Open the live demo](https://jdardash.github.io/space-collision-predictor/)**: the WorldView globe running entirely in the browser, propagating a real catalog with client-side SGP4. No backend, no sign-in, nothing to cold-start.
+
+The demo ships a fixed TLE snapshot, so treat the positions as illustrative rather than operational: SGP4 accuracy degrades within a couple of weeks of epoch. For current elements, run the full application with `make docker`, which fetches live CelesTrak data and adds the position feed, conjunction analysis, and the aircraft, seismic, and traffic layers.
+
 [![CI](https://github.com/jdardash/space-collision-predictor/actions/workflows/ci.yml/badge.svg)](https://github.com/jdardash/space-collision-predictor/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white)](https://python.org)
 [![SGP4](https://img.shields.io/badge/SGP4-WGS72-orange)](https://pypi.org/project/sgp4/)

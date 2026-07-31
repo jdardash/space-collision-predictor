@@ -1,0 +1,57 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Build static demo
+        run: python scripts/build_static_demo.py dist
+
+      - name: Verify the build is self-contained
+        run: |
+          test -f dist/index.html
+          test -f dist/.nojekyll
+          for n in tles satellite-positions satellite-orbits config conjunction-globe-data; do
+            test -s "dist/data/$n.json" || { echo "empty payload: $n"; exit 1; }
+          done
+          grep -q 'window.STATIC_DEMO = true;' dist/index.html \
+            || { echo "static mode flag was not flipped"; exit 1; }
+          ! grep -q 'fromIonAssetId' dist/index.html \
+            || { echo "cesium ion asset path survived the build"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

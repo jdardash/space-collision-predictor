@@ -1989,7 +1989,7 @@ async function fetchConjunctionGlobeData(hours, threshold) {
     addIntelItem('Conjunctions rendered on globe: ' + normalized.length + ' events');
   } catch (e) {
     // Fallback: render with basic data (no lat/lon), which won't show on globe
-    addIntelItem('Globe conjunction data unavailable — showing table only');
+    addIntelItem('Globe conjunction data unavailable, showing table only');
   }
 }
 
@@ -3043,7 +3043,7 @@ async function init() {
 
     setLoadingProgress(40, 'LOADING DATA...');
 
-    // Load config and satellite data in parallel — globe is already visible
+    // Load config and satellite data in parallel; globe is already visible
     await Promise.all([
       checkConfig(),
       startSatLayer(),
@@ -3052,7 +3052,7 @@ async function init() {
     setLoadingProgress(90, 'STARTING DATA FEEDS...');
 
     // Orbits and earthquakes load on-demand when user enables the layer
-    // This matches how LeoLabs/keeptrack handle it — globe + dots first, detail on interaction
+    // This matches how LeoLabs/keeptrack handle it: globe plus dots first, detail on interaction
 
     setInterval(loadSatellites, REFRESH_SATS_MS);
     setInterval(function() { if (layerState.orbits) { orbitCacheDirty = true; loadOrbitPaths(); } }, 30000);
