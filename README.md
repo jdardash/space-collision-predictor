@@ -1,9 +1,8 @@
 # Space-Domain Awareness Collision Predictor
 
-**Satellite conjunction analysis engine** — SGP4 orbital propagation, two-phase collision screening, collision probability computation, maneuver planning, and interactive 3D visualization.
+**Satellite conjunction analysis engine**: SGP4 orbital propagation, two-phase collision screening, collision probability computation, maneuver planning, and interactive 3D visualization.
 
 [![CI](https://github.com/jdardash/space-collision-predictor/actions/workflows/ci.yml/badge.svg)](https://github.com/jdardash/space-collision-predictor/actions)
-[![codecov](https://codecov.io/gh/jdardash/space-collision-predictor/branch/main/graph/badge.svg)](https://codecov.io/gh/jdardash/space-collision-predictor)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white)](https://python.org)
 [![SGP4](https://img.shields.io/badge/SGP4-WGS72-orange)](https://pypi.org/project/sgp4/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -12,7 +11,7 @@
 
 ![3D Conjunction Visualization](docs/screenshot.png)
 
-### WorldView — live catalog globe
+### WorldView: live catalog globe
 
 1,406 objects propagated client-side, with per-entity tracking, selectable data layers, and time-warp playback.
 
@@ -26,7 +25,7 @@
 
 ## What It Does
 
-Ingests **Two-Line Element sets (TLEs)** from CelesTrak, propagates orbits with **SGP4**, screens all satellite pairs for close approaches, computes collision probability with TLE-age-scaled covariance, and generates avoidance maneuver options — all served over a FastAPI REST/WebSocket API with a built-in 3D dashboard.
+Ingests **Two-Line Element sets (TLEs)** from CelesTrak, propagates orbits with **SGP4**, screens all satellite pairs for close approaches, computes collision probability with TLE-age-scaled covariance, and generates avoidance maneuver options, all served over a FastAPI REST/WebSocket API with a built-in 3D dashboard.
 
 | Feature | Description |
 | ------- | ----------- |
@@ -54,7 +53,7 @@ pip install -e ".[dev]"
 python -m sda.api
 ```
 
-Open [localhost:8000](http://localhost:8000) — the server starts instantly with a bundled demo catalog, then seeds live data from CelesTrak in the background. Interactive API docs at [localhost:8000/docs](http://localhost:8000/docs).
+Open [localhost:8000](http://localhost:8000). The server starts instantly with a bundled demo catalog, then seeds live data from CelesTrak in the background. Interactive API docs at [localhost:8000/docs](http://localhost:8000/docs).
 
 > PyPI publication is planned; until then, install from source as above.
 
@@ -156,7 +155,7 @@ graph TB
 
 ## API Reference
 
-27 REST endpoints + 1 WebSocket — auto-generated docs at **/docs** (Swagger UI) and **/redoc**.
+27 REST endpoints + 1 WebSocket, with auto-generated docs at **/docs** (Swagger UI) and **/redoc**.
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
@@ -213,9 +212,9 @@ graph TB
 3. Integrate the 2D Gaussian over the circular hard-body cross-section (default combined radius 20 m)
 4. Radial integration uses the modified Bessel function I0 (Abramowitz & Stegun 9.8.1-2)
 
-**Covariance model:** TLEs carry no covariance, so an isotropic synthetic sigma is used, scaled with TLE epoch age following Vallado (2013, Ch. 9) — 50 m for a fresh TLE, growing to ~500 m at 3 days. Note the well-known *probability dilution* property of 2D Pc: for very stale data, larger sigma can decrease reported Pc; miss distance and risk level are therefore always reported alongside Pc.
+**Covariance model:** TLEs carry no covariance, so an isotropic synthetic sigma is used, scaled with TLE epoch age following Vallado (2013, Ch. 9): 50 m for a fresh TLE, growing to ~500 m at 3 days. Note the well-known *probability dilution* property of 2D Pc: for very stale data, larger sigma can decrease reported Pc; miss distance and risk level are therefore always reported alongside Pc.
 
-**Full-covariance path:** when real covariances are available — e.g. from an ingested CCSDS CDM (`POST /conjunctions/cdm/ingest`) — Pc is computed from the actual 3x3 per-object RTN covariances instead of the synthetic sigma. Each covariance is rotated to ECI via its object's own state, combined, projected onto the encounter plane, and evaluated with two independent methods that are reported side by side: Foster 2D quadrature (adaptive polar grid) and the Chan analytic series, evaluated in a cancellation-free summation order that stays accurate into the deep tail (Pc ~ 1e-16).
+**Full-covariance path:** when real covariances are available, e.g. from an ingested CCSDS CDM (`POST /conjunctions/cdm/ingest`), Pc is computed from the actual 3x3 per-object RTN covariances instead of the synthetic sigma. Each covariance is rotated to ECI via its object's own state, combined, projected onto the encounter plane, and evaluated with two independent methods that are reported side by side: Foster 2D quadrature (adaptive polar grid) and the Chan analytic series, evaluated in a cancellation-free summation order that stays accurate into the deep tail (Pc ~ 1e-16).
 
 ---
 
@@ -223,7 +222,7 @@ graph TB
 
 - **Propagation** delegates to [python-sgp4](https://github.com/brandon-rhodes/python-sgp4), which is verified against the official Vallado et al. (2006) reference implementation of SGP4 (agreement to ~0.1 mm). This project pins the **WGS72** gravity model and the `(jd, fr)` split Julian-date convention throughout; shared constants in `constants.py` match `sgp4`'s internal WGS72 values exactly.
 - **Frames:** all positions/velocities are ECI (TEME) in km and km/s. Geodetic conversion (WGS84 ellipsoid) is used only for map display, never in conjunction math.
-- **Pc cross-method validation:** every Pc implementation shipped by this package is validated against mathematically independent references by `python -m sda.validation` (also a CI gate — non-zero exit on any failure). Four computation approaches are compared across 11 scenarios spanning isotropic and anisotropic (up to 10:1 aspect, rotated) covariances and miss distances from 0 to 8 sigma: closed-form solutions, the Chan analytic series (exact for isotropic encounters), Foster 2D quadrature, and Monte Carlo sampling. Measured agreement (this release):
+- **Pc cross-method validation:** every Pc implementation shipped by this package is validated against mathematically independent references by `python -m sda.validation` (also a CI gate, with a non-zero exit on any failure). Four computation approaches are compared across 11 scenarios spanning isotropic and anisotropic (up to 10:1 aspect, rotated) covariances and miss distances from 0 to 8 sigma: closed-form solutions, the Chan analytic series (exact for isotropic encounters), Foster 2D quadrature, and Monte Carlo sampling. Measured agreement (this release):
 
   | Comparison | Regime | Max relative error |
   | ---------- | ------ | ------------------ |
@@ -301,7 +300,7 @@ railway login && railway init && railway up
 fly launch && fly deploy
 ```
 
-The `Dockerfile` includes a container health check. No environment variables are required — the app starts with a bundled demo catalog and seeds live CelesTrak data in the background.
+The `Dockerfile` includes a container health check. No environment variables are required; the app starts with a bundled demo catalog and seeds live CelesTrak data in the background.
 
 ---
 

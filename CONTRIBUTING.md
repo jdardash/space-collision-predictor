@@ -14,7 +14,7 @@ pip install -e ".[dev]"
 ## Development Workflow
 
 1. Create a branch from `main` for your change
-2. Write code — follow existing style (ruff enforced)
+2. Write code, following existing style (ruff enforced)
 3. Add or update tests as needed
 4. Run the verification suite before submitting:
 
@@ -26,13 +26,13 @@ ruff check src/ tests/          # Linting
 
 ## Pull Requests
 
-- Keep PRs focused — one feature or fix per PR
+- Keep PRs focused: one feature or fix per PR
 - Include a clear description of *what* and *why*
 - Ensure all tests pass and coverage doesn't regress
 
 ## Safety-Critical Code
 
-Changes to risk classification thresholds (`conjunction.py:classify_risk`) or propagation constants require extra review. These are safety-critical paths — please flag them explicitly in your PR description.
+Changes to risk classification thresholds (`conjunction.py:classify_risk`) or propagation constants require extra review. These are safety-critical paths, so please flag them explicitly in your PR description.
 
 ## Reporting Issues
 

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Full-covariance collision probability: Foster 2D quadrature (`pc_foster`), Chan analytic series (`pc_chan`), and 2D Monte Carlo (`pc_monte_carlo_2d`) over real 3x3 position covariances, with RTN-to-ECI covariance rotation and encounter-plane projection (`compute_collision_probability_full`)
-- CCSDS CDM ingestion: KVN parser (`parse_cdm`) honoring CCSDS 508.0-B-1 default units with bracketed-unit overrides, and Pc computed from the message's per-object RTN covariances (`compute_pc_from_cdm`) — CDM support is now two-directional
+- CCSDS CDM ingestion: KVN parser (`parse_cdm`) honoring CCSDS 508.0-B-1 default units with bracketed-unit overrides, and Pc computed from the message's per-object RTN covariances (`compute_pc_from_cdm`); CDM support is now two-directional
 - `POST /conjunctions/cdm/ingest` endpoint returning parsed CDM fields plus Foster and Chan Pc, the stated Pc, and any assumptions made
 - Cross-method Pc validation suite (`python -m sda.validation`, non-zero exit on failure): closed form vs. Chan series vs. Foster quadrature vs. Monte Carlo vs. legacy pipeline across 11 isotropic/anisotropic scenarios; max relative error between independent methods 3.7e-6
 - 42 new tests (probability methods, CDM round-trip and ingestion, validation suite)
@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Collision probability now uses TLE-age-scaled position covariance (Vallado 2013, Ch. 9) instead of a fixed 50 m sigma — stale TLEs no longer produce overconfident Pc values
+- Collision probability now uses TLE-age-scaled position covariance (Vallado 2013, Ch. 9) instead of a fixed 50 m sigma, so stale TLEs no longer produce overconfident Pc values
 - Earth constants aligned to SGP4 WGS72 exactly: equatorial radius 6378.135 km, gravitational parameter 398600.8 km³/s² (removes a ~7 km bias in decay altitude estimates)
 
 ### Fixed
