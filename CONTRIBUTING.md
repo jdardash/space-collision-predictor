@@ -13,7 +13,7 @@ pip install -e ".[dev]"
 
 ## Development Workflow
 
-1. Create a branch from `master` for your change
+1. Create a branch from `main` for your change
 2. Write code — follow existing style (ruff enforced)
 3. Add or update tests as needed
 4. Run the verification suite before submitting:

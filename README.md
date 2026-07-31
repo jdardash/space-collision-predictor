@@ -3,7 +3,7 @@
 **Satellite conjunction analysis engine** — SGP4 orbital propagation, two-phase collision screening, collision probability computation, maneuver planning, and interactive 3D visualization.
 
 [![CI](https://github.com/jdardash/space-collision-predictor/actions/workflows/ci.yml/badge.svg)](https://github.com/jdardash/space-collision-predictor/actions)
-[![codecov](https://codecov.io/gh/jdardash/space-collision-predictor/branch/master/graph/badge.svg)](https://codecov.io/gh/jdardash/space-collision-predictor)
+[![codecov](https://codecov.io/gh/jdardash/space-collision-predictor/branch/main/graph/badge.svg)](https://codecov.io/gh/jdardash/space-collision-predictor)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white)](https://python.org)
 [![SGP4](https://img.shields.io/badge/SGP4-WGS72-orange)](https://pypi.org/project/sgp4/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -11,6 +11,16 @@
 ---
 
 ![3D Conjunction Visualization](docs/screenshot.png)
+
+### WorldView — live catalog globe
+
+1,406 objects propagated client-side, with per-entity tracking, selectable data layers, and time-warp playback.
+
+![WorldView global view with tracked entity](docs/showcase-worldview.png)
+
+| Entity tracking | NVG view mode |
+| --- | --- |
+| ![Tracking a satellite](docs/showcase-tracking.png) | ![NVG post-processing filter](docs/showcase-nvg.png) |
 
 ---
 

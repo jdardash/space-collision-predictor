@@ -18,3 +18,12 @@ preview.html
 
 # Tooling artifacts
 .playwright-mcp/
+
+# Local agent tooling and session notes (not part of the published project)
+.claude/
+.remember/
+docs/handoffs/
+docs/superpowers/
+uv.lock
+showcase-*.png
+worldview-after-*.png
