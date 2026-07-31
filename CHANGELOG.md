@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-31
+
 ### Added
 
 - Full-covariance collision probability: Foster 2D quadrature (`pc_foster`), Chan analytic series (`pc_chan`), and 2D Monte Carlo (`pc_monte_carlo_2d`) over real 3x3 position covariances, with RTN-to-ECI covariance rotation and encounter-plane projection (`compute_collision_probability_full`)

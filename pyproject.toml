@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "space-collision-predictor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Satellite conjunction analysis engine with SGP4 propagation and collision probability"
 readme = "README.md"
 license = {text = "MIT"}
