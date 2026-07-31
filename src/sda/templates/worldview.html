@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WorldView — SDA Intelligence Dashboard</title>
+<title>WorldView: SDA Intelligence Dashboard</title>
+<!-- Inline so the page never requests a favicon that is not there. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2300d4ff' stroke-width='2'/%3E%3Cellipse cx='16' cy='16' rx='15' ry='6' fill='none' stroke='%2300d4ff' stroke-width='1.5' transform='rotate(-30 16 16)'/%3E%3Ccircle cx='28' cy='10' r='2.5' fill='%23ff9500'/%3E%3C/svg%3E">
 <script>window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/';</script>
 <script src="https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/Cesium.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js" integrity="sha384-e6V1JVpc+kVNTxT0gEOla7yL4c92Romsw7itPoipfzHbEjzUwPhTv6oeVDMHHzqT" crossorigin="anonymous"></script>
@@ -883,8 +885,37 @@
 </div>
 
 <script>
+  // STATIC_DEMO_FLAG
+  // Live mode leaves this false and nothing below runs. The static build flips
+  // it to true, which redirects the baked endpoints at precomputed JSON and
+  // stubs out the live-only proxies and the position WebSocket.
+  window.STATIC_DEMO = false;
+  (function () {
+    if (!window.STATIC_DEMO) return;
+    var BAKED = ["tles", "satellite-positions", "satellite-orbits",
+                 "config", "conjunction-globe-data"];
+    var nativeFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      var url = typeof input === "string" ? input : (input && input.url) || "";
+      var match = /\/api\/([a-z-]+)/.exec(url);
+      if (!match) return nativeFetch(input, init);
+      if (BAKED.indexOf(match[1]) !== -1) {
+        return nativeFetch("data/" + match[1] + ".json");
+      }
+      return Promise.resolve(new Response("[]", {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    };
+    window.WebSocket = function () {
+      return { close: function () {}, send: function () {}, readyState: 3 };
+    };
+  })();
+</script>
+
+<script>
 // ============================================================
-// WORLDVIEW v2.0 — SDA Intelligence Dashboard
+// WORLDVIEW v2.0 - SDA Intelligence Dashboard
 // Full-spectrum geospatial intelligence: satellites, aircraft,
 // military flights, seismic, traffic, CCTV, and more.
 // ============================================================
@@ -1003,6 +1034,11 @@ function initCesium() {
   Cesium.Ion.defaultAccessToken = undefined;
 
   viewer = new Cesium.Viewer('cesiumContainer', {
+    // No Ion token is configured, so let Cesium build no default base layer at
+    // all. Without this it constructs Ion World Imagery (asset 2), fires a
+    // request to api.cesium.com that 401s, and only then gets replaced by the
+    // token-free provider added below.
+    baseLayer: false,
     animation: false,
     timeline: false,
     baseLayerPicker: false,

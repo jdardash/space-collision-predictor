@@ -31,3 +31,4 @@ uv.lock
 # docs/ and are tracked -- keep this pattern root-scoped so it cannot swallow them.
 /showcase-*.png
 /worldview-after-*.png
+dist/
