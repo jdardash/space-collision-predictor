@@ -45,6 +45,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=8.0,<9.0", "pytest-cov>=4.0,<6.0", "httpx>=0.27"]
 lint = ["mypy>=1.8", "ruff>=0.3"]
+screening = ["scipy>=1.11,<2.0"]
+reports = ["fpdf2>=2.7,<3.0"]
+full = ["space-collision-predictor[screening,reports]"]
 dev = ["space-collision-predictor[test,lint]"]
 
 [project.urls]

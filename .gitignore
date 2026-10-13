@@ -32,3 +32,7 @@ uv.lock
 /showcase-*.png
 /worldview-after-*.png
 dist/
+
+# Third-party reference checkouts (see reference/README.md). The clones are
+# local-only; reference/README.md and the comparison notes stay tracked.
+reference/*/

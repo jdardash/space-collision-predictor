@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sda-config
+  labels:
+    app.kubernetes.io/name: sda
+data:
+  # Inside a pod the service must listen on all interfaces; the application
+  # itself defaults to 127.0.0.1 (see src/sda/ratelimit.py bind_host).
+  SDA_HOST: "0.0.0.0"
+  SDA_PORT: "8000"
+  # Browser origins allowed to call the API. Comma separated, no wildcard.
+  SDA_CORS_ORIGINS: "https://sda.example.com"
+  # Per-IP token bucket applied to /api/ and /agent/. Set to "off" to disable.
+  SDA_RATE_LIMIT: "600/minute"
+  SDA_RATE_LIMIT_PATHS: "/api/,/agent/"
+  # Only enable this behind a proxy you control, otherwise a client can forge
+  # X-Forwarded-For and get its own rate-limit bucket per request.
+  SDA_RATE_LIMIT_TRUST_FORWARDED: "0"
+  PYTHONUNBUFFERED: "1"

@@ -16,7 +16,14 @@ router = APIRouter()
 @router.get("/health", tags=["System"], summary="Health check and system status")
 def health():
     """Returns system status, satellite count, TLE freshness summary, and uptime."""
-    from sda.api import CELESTRAK_GROUPS, _last_tle_refresh, _live_f107, _metrics, store
+    from sda.api import (
+        CELESTRAK_GROUPS,
+        TLE_REFRESH_INTERVAL_S,
+        _last_tle_refresh,
+        _live_f107,
+        _metrics,
+        store,
+    )
 
     stale = store.get_stale_satellites()
     return {
@@ -27,7 +34,7 @@ def health():
             "f107_solar_flux": _live_f107,
             "last_tle_refresh": _last_tle_refresh.isoformat() if _last_tle_refresh else None,
             "celestrak_groups": len(CELESTRAK_GROUPS),
-            "auto_refresh_hours": 2,
+            "auto_refresh_hours": round(TLE_REFRESH_INTERVAL_S / 3600.0, 2),
         },
         "version": __version__,
         "timestamp": datetime.now(UTC).isoformat(),

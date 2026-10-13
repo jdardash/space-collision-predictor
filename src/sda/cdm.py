@@ -11,6 +11,9 @@ Reference: CCSDS 508.0-B-1, "Conjunction Data Message" (June 2013).
 
 from __future__ import annotations
 
+import re
+import xml.etree.ElementTree as ElementTree
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from textwrap import dedent
 
@@ -20,6 +23,10 @@ from sda.constants import DEFAULT_POSITION_SIGMA_KM
 from sda.models import CDMObjectState, CDMPcResult, ConjunctionEvent, ParsedCDM, TLERecord
 from sda.probability import compute_collision_probability_full, rtn_covariance_to_eci
 
+#: Default value for the CCSDS COLLISION_PROBABILITY_METHOD keyword. The Pc this
+#: package reports as `probability` is the Foster 1992 numerical method.
+DEFAULT_PC_METHOD_NAME = "FOSTER-1992"
+
 
 def generate_cdm(
     event: ConjunctionEvent,
@@ -28,17 +35,21 @@ def generate_cdm(
     collision_probability: float | None = None,
     message_id: str | None = None,
     originator: str = "SDA-COLLISION-PREDICTOR",
+    collision_probability_method: str = DEFAULT_PC_METHOD_NAME,
 ) -> str:
     """Generate a CCSDS-formatted Conjunction Data Message.
 
     Parameters
     ----------
-    event : ConjunctionEvent — the conjunction to report
+    event : ConjunctionEvent, the conjunction to report
     tle_primary : optional TLERecord for additional metadata
     tle_secondary : optional TLERecord for additional metadata
     collision_probability : optional Pc value to include
     message_id : optional unique message ID
     originator : message originator identifier
+    collision_probability_method : CCSDS COLLISION_PROBABILITY_METHOD value,
+        emitted alongside COLLISION_PROBABILITY so a reader knows which
+        formulation produced the number (CCSDS 508.0-B-1 section 3.5.2)
 
     Returns
     -------
@@ -63,7 +74,11 @@ def generate_cdm(
 
     pc_line = ""
     if collision_probability is not None:
-        pc_line = f"COLLISION_PROBABILITY          = {collision_probability:.6e}\n"
+        pc_line = (
+            f"COLLISION_PROBABILITY         = {collision_probability:.6e}\n"
+            f"        COLLISION_PROBABILITY_METHOD  = {collision_probability_method}\n"
+            "        "
+        )
 
     cdm = dedent(f"""\
         CCSDS_CDM_VERS                = 1.0
@@ -128,6 +143,23 @@ def _extract_intl_designator(tle: TLERecord) -> str:
 _KM_PER_UNIT = {"m": 1e-3, "km": 1.0}
 _KM_S_PER_UNIT = {"m/s": 1e-3, "km/s": 1.0}
 _KM2_PER_UNIT = {"m**2": 1e-6, "km**2": 1.0, "m2": 1e-6, "km2": 1.0}
+_KM2_S_PER_UNIT = {"m**2/s": 1e-6, "km**2/s": 1.0, "m2/s": 1e-6, "km2/s": 1.0}
+_KM2_S2_PER_UNIT = {
+    "m**2/s**2": 1e-6,
+    "km**2/s**2": 1.0,
+    "m2/s2": 1e-6,
+    "km2/s2": 1.0,
+}
+
+# Full 6x6 RTN covariance element names, lower triangle, in CCSDS order.
+# Row/column order is R, T, N, RDOT, TDOT, NDOT; only the 3x3 position block
+# feeds the Pc computation, the rest is carried through for reporting.
+_COV_AXES = ("R", "T", "N", "RDOT", "TDOT", "NDOT")
+_COV6_INDEX: dict[str, tuple[int, int]] = {
+    f"C{_COV_AXES[i]}_{_COV_AXES[j]}": (i, j)
+    for i in range(6)
+    for j in range(i + 1)
+}
 
 # keyword -> (default unit table, default unit)
 _UNIT_DEFAULTS: dict[str, tuple[dict[str, float], str]] = {
@@ -145,13 +177,18 @@ _UNIT_DEFAULTS: dict[str, tuple[dict[str, float], str]] = {
     "X_DOT": (_KM_S_PER_UNIT, "km/s"),
     "Y_DOT": (_KM_S_PER_UNIT, "km/s"),
     "Z_DOT": (_KM_S_PER_UNIT, "km/s"),
-    "CR_R": (_KM2_PER_UNIT, "m**2"),
-    "CT_R": (_KM2_PER_UNIT, "m**2"),
-    "CT_T": (_KM2_PER_UNIT, "m**2"),
-    "CN_R": (_KM2_PER_UNIT, "m**2"),
-    "CN_T": (_KM2_PER_UNIT, "m**2"),
-    "CN_N": (_KM2_PER_UNIT, "m**2"),
 }
+
+# Covariance keywords: position-position in m**2, position-velocity in m**2/s
+# and velocity-velocity in m**2/s**2 by CCSDS default.
+for _name, (_row, _col) in _COV6_INDEX.items():
+    _velocity_terms = (_row >= 3) + (_col >= 3)
+    if _velocity_terms == 0:
+        _UNIT_DEFAULTS[_name] = (_KM2_PER_UNIT, "m**2")
+    elif _velocity_terms == 1:
+        _UNIT_DEFAULTS[_name] = (_KM2_S_PER_UNIT, "m**2/s")
+    else:
+        _UNIT_DEFAULTS[_name] = (_KM2_S2_PER_UNIT, "m**2/s**2")
 
 # Position covariance lower triangle in RTN order (row, col) per keyword.
 _COV_INDEX = {
@@ -164,16 +201,22 @@ _COV_INDEX = {
 }
 
 
+def _convert_cdm_value(key: str, number: float, unit: str | None) -> float:
+    """Convert one CDM numeric value to km / km/s / km**2 given its unit."""
+    table, default_unit = _UNIT_DEFAULTS[key]
+    resolved = default_unit if unit is None or unit == "" else unit
+    try:
+        return number * table[resolved]
+    except KeyError:
+        raise ValueError(f"Unsupported unit '{resolved}' for CDM keyword {key}") from None
+
+
 def _parse_kvn_value(key: str, raw: str) -> float:
     """Parse a numeric KVN value, honoring an optional bracketed unit."""
     parts = raw.split("[", 1)
     number = float(parts[0].strip())
-    table, default_unit = _UNIT_DEFAULTS[key]
-    unit = parts[1].rstrip("]").strip() if len(parts) == 2 else default_unit
-    try:
-        return number * table[unit]
-    except KeyError:
-        raise ValueError(f"Unsupported unit '{unit}' for CDM keyword {key}") from None
+    unit = parts[1].rstrip("]").strip() if len(parts) == 2 else None
+    return _convert_cdm_value(key, number, unit)
 
 
 def _parse_cdm_datetime(raw: str) -> datetime | None:
@@ -185,82 +228,287 @@ def _parse_cdm_datetime(raw: str) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
-def parse_cdm(cdm_text: str) -> ParsedCDM:
-    """Parse a CCSDS 508.0-B-1 Conjunction Data Message in KVN format.
+@dataclass
+class CDMObjectDetail:
+    """Per-object detail a ParsedCDM has no field for."""
 
-    Extracts relative metadata (TCA, miss distance, relative speed and
-    state, stated Pc) and per-object data (designator, name, ECI state,
-    RTN position covariance). Unknown keywords are ignored; bracketed
-    units are honored with CCSDS defaults otherwise (note: CCSDS states
-    X/Y/Z in km but covariance in m**2).
+    label: str
+    comments: list[str] = field(default_factory=list)
+    covariance_rtn_6x6_km2: list[list[float]] | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ParsedCDMDetail:
+    """A parsed CDM plus everything outside the ParsedCDM model.
+
+    `parsed` is the ParsedCDM the rest of the service consumes; the extra
+    fields carry what that model has no room for: which wire format the
+    message arrived in, the COMMENT lines, the stated Pc method, and the full
+    6x6 RTN covariance of each object (the 3x3 position block of which is the
+    part used for Pc).
     """
-    if "CCSDS_CDM_VERS" not in cdm_text:
-        raise ValueError("Not a CCSDS CDM: missing CCSDS_CDM_VERS")
 
-    parsed = ParsedCDM()
-    scalars: dict[str, float] = {}
-    obj_scalars: list[dict[str, float]] = [{}, {}]
-    obj_meta: list[dict[str, str]] = [{}, {}]
-    obj_cov: list[dict[str, float]] = [{}, {}]
-    section = -1  # -1 = relative metadata; 0/1 = OBJECT1/OBJECT2
+    parsed: ParsedCDM
+    source_format: str
+    comments: list[str] = field(default_factory=list)
+    collision_probability_method: str | None = None
+    object1: CDMObjectDetail = field(default_factory=lambda: CDMObjectDetail("OBJECT1"))
+    object2: CDMObjectDetail = field(default_factory=lambda: CDMObjectDetail("OBJECT2"))
 
-    for line in cdm_text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("COMMENT") or "=" not in line:
+
+@dataclass
+class _CDMRaw:
+    """Format-independent accumulator shared by the KVN and XML readers."""
+
+    scalars: dict[str, float] = field(default_factory=dict)
+    obj_scalars: list[dict[str, float]] = field(default_factory=lambda: [{}, {}])
+    obj_meta: list[dict[str, str]] = field(default_factory=lambda: [{}, {}])
+    obj_cov: list[dict[str, float]] = field(default_factory=lambda: [{}, {}])
+    obj_comments: list[list[str]] = field(default_factory=lambda: [[], []])
+    comments: list[str] = field(default_factory=list)
+    message_id: str | None = None
+    originator: str | None = None
+    tca: datetime | None = None
+    collision_probability: float | None = None
+    collision_probability_method: str | None = None
+
+
+def _covariance_matrices(
+    elements: dict[str, float],
+) -> tuple[list[list[float]], list[list[float]]]:
+    """Build the (3x3 position, 6x6 full) RTN covariances from named elements."""
+    full = [[0.0] * 6 for _ in range(6)]
+    for keyword, (row, col) in _COV6_INDEX.items():
+        value = elements.get(keyword)
+        if value is None:
             continue
-        key, _, raw = line.partition("=")
-        key = key.strip()
-        raw = raw.strip()
+        full[row][col] = value
+        full[col][row] = value
+    position = [row[:3] for row in full[:3]]
+    return position, full
 
-        if key == "OBJECT":
-            section = 0 if raw.upper() == "OBJECT1" else 1
-        elif key == "MESSAGE_ID":
-            parsed.message_id = raw
-        elif key == "ORIGINATOR":
-            parsed.originator = raw
-        elif key == "TCA":
-            parsed.tca = _parse_cdm_datetime(raw)
-        elif key == "COLLISION_PROBABILITY":
-            parsed.stated_collision_probability = float(raw.split("[")[0])
-        elif key in ("OBJECT_DESIGNATOR", "OBJECT_NAME") and section >= 0:
-            obj_meta[section]["designator" if key == "OBJECT_DESIGNATOR" else "name"] = raw
-        elif key in _COV_INDEX and section >= 0:
-            obj_cov[section][key] = _parse_kvn_value(key, raw)
-        elif key in _UNIT_DEFAULTS:
-            target = scalars if section < 0 else obj_scalars[section]
-            target[key] = _parse_kvn_value(key, raw)
 
-    parsed.miss_distance_km = scalars.get("MISS_DISTANCE")
-    parsed.relative_speed_km_s = scalars.get("RELATIVE_SPEED")
+def _build_detail(raw: _CDMRaw, source_format: str) -> ParsedCDMDetail:
+    """Assemble a ParsedCDM (plus detail) from format-independent fields."""
+    parsed = ParsedCDM()
+    parsed.message_id = raw.message_id
+    parsed.originator = raw.originator
+    parsed.tca = raw.tca
+    parsed.stated_collision_probability = raw.collision_probability
+    parsed.miss_distance_km = raw.scalars.get("MISS_DISTANCE")
+    parsed.relative_speed_km_s = raw.scalars.get("RELATIVE_SPEED")
 
     rel_pos_keys = ("RELATIVE_POSITION_R", "RELATIVE_POSITION_T", "RELATIVE_POSITION_N")
     rel_vel_keys = ("RELATIVE_VELOCITY_R", "RELATIVE_VELOCITY_T", "RELATIVE_VELOCITY_N")
-    if all(k in scalars for k in rel_pos_keys):
+    if all(k in raw.scalars for k in rel_pos_keys):
         parsed.relative_position_rtn_km = (
-            scalars[rel_pos_keys[0]], scalars[rel_pos_keys[1]], scalars[rel_pos_keys[2]],
+            raw.scalars[rel_pos_keys[0]],
+            raw.scalars[rel_pos_keys[1]],
+            raw.scalars[rel_pos_keys[2]],
         )
-    if all(k in scalars for k in rel_vel_keys):
+    if all(k in raw.scalars for k in rel_vel_keys):
         parsed.relative_velocity_rtn_km_s = (
-            scalars[rel_vel_keys[0]], scalars[rel_vel_keys[1]], scalars[rel_vel_keys[2]],
+            raw.scalars[rel_vel_keys[0]],
+            raw.scalars[rel_vel_keys[1]],
+            raw.scalars[rel_vel_keys[2]],
         )
 
+    details = (CDMObjectDetail("OBJECT1"), CDMObjectDetail("OBJECT2"))
     for idx, obj in enumerate((parsed.object1, parsed.object2)):
-        obj.designator = obj_meta[idx].get("designator")
-        obj.name = obj_meta[idx].get("name")
-        vals = obj_scalars[idx]
+        obj.designator = raw.obj_meta[idx].get("OBJECT_DESIGNATOR")
+        obj.name = raw.obj_meta[idx].get("OBJECT_NAME")
+        vals = raw.obj_scalars[idx]
         if all(k in vals for k in ("X", "Y", "Z")):
             obj.position_km = (vals["X"], vals["Y"], vals["Z"])
         if all(k in vals for k in ("X_DOT", "Y_DOT", "Z_DOT")):
             obj.velocity_km_s = (vals["X_DOT"], vals["Y_DOT"], vals["Z_DOT"])
-        if obj_cov[idx]:
-            cov = [[0.0] * 3 for _ in range(3)]
-            for kw, (i, j) in _COV_INDEX.items():
-                value = obj_cov[idx].get(kw, 0.0)
-                cov[i][j] = value
-                cov[j][i] = value
-            obj.cov_rtn_km2 = cov
+        if raw.obj_cov[idx]:
+            position, full = _covariance_matrices(raw.obj_cov[idx])
+            obj.cov_rtn_km2 = position
+            details[idx].covariance_rtn_6x6_km2 = full
+        details[idx].comments = raw.obj_comments[idx]
+        details[idx].metadata = raw.obj_meta[idx]
 
-    return parsed
+    return ParsedCDMDetail(
+        parsed=parsed,
+        source_format=source_format,
+        comments=raw.comments,
+        collision_probability_method=raw.collision_probability_method,
+        object1=details[0],
+        object2=details[1],
+    )
+
+
+def _parse_cdm_kvn(cdm_text: str) -> ParsedCDMDetail:
+    """Read a CDM in KVN (keyword = value) form."""
+    raw = _CDMRaw()
+    section = -1  # -1 = relative metadata; 0/1 = OBJECT1/OBJECT2
+
+    for line in cdm_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("COMMENT"):
+            text = line[len("COMMENT"):].strip()
+            if section < 0:
+                raw.comments.append(text)
+            else:
+                raw.obj_comments[section].append(text)
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+
+        if key == "OBJECT":
+            section = 0 if value.upper() == "OBJECT1" else 1
+        elif key == "MESSAGE_ID":
+            raw.message_id = value
+        elif key == "ORIGINATOR":
+            raw.originator = value
+        elif key == "TCA":
+            raw.tca = _parse_cdm_datetime(value)
+        elif key == "COLLISION_PROBABILITY":
+            raw.collision_probability = float(value.split("[")[0])
+        elif key == "COLLISION_PROBABILITY_METHOD":
+            raw.collision_probability_method = value
+        elif key in _COV6_INDEX and section >= 0:
+            raw.obj_cov[section][key] = _parse_kvn_value(key, value)
+        elif key in _UNIT_DEFAULTS:
+            target = raw.scalars if section < 0 else raw.obj_scalars[section]
+            target[key] = _parse_kvn_value(key, value)
+        elif section >= 0:
+            raw.obj_meta[section][key] = value
+
+    return _build_detail(raw, "KVN")
+
+
+def _xml_local_name(tag: str) -> str:
+    """Element tag without its XML namespace."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _read_xml_element(element: ElementTree.Element, raw: _CDMRaw, section: int) -> None:
+    """Store one leaf XML element into the format-independent accumulator."""
+    key = _xml_local_name(element.tag)
+    text = (element.text or "").strip()
+    if not text:
+        return
+    unit = element.get("units") or element.get("UNITS")
+
+    if key == "COMMENT":
+        if section < 0:
+            raw.comments.append(text)
+        else:
+            raw.obj_comments[section].append(text)
+    elif key == "MESSAGE_ID":
+        raw.message_id = text
+    elif key == "ORIGINATOR":
+        raw.originator = text
+    elif key == "TCA":
+        raw.tca = _parse_cdm_datetime(text)
+    elif key == "COLLISION_PROBABILITY":
+        raw.collision_probability = float(text)
+    elif key == "COLLISION_PROBABILITY_METHOD":
+        raw.collision_probability_method = text
+    elif key in _COV6_INDEX and section >= 0:
+        raw.obj_cov[section][key] = _convert_cdm_value(key, float(text), unit)
+    elif key in _UNIT_DEFAULTS:
+        value = _convert_cdm_value(key, float(text), unit)
+        if section < 0:
+            raw.scalars[key] = value
+        else:
+            raw.obj_scalars[section][key] = value
+    elif section >= 0 and key != "OBJECT":
+        raw.obj_meta[section][key] = text
+
+
+def _xml_segment_section(segment: ElementTree.Element, default: int) -> int:
+    """Which object a <segment> describes, from its OBJECT metadata element."""
+    for element in segment.iter():
+        if _xml_local_name(element.tag) == "OBJECT":
+            text = (element.text or "").strip().upper()
+            if text.endswith("2"):
+                return 1
+            if text.endswith("1"):
+                return 0
+    return default
+
+
+def _parse_cdm_xml(cdm_text: str) -> ParsedCDMDetail:
+    """Read a CDM in the CCSDS 508.0-B-1 XML form.
+
+    Structure adapted from orbveil data/cdm.py (Apache-2.0). Namespaces are
+    ignored (only local element names are matched), units come from the
+    `units` attribute rather than a bracketed suffix, and the two <segment>
+    elements supply OBJECT1 and OBJECT2 in the order their OBJECT element
+    names them.
+    """
+    try:
+        root = ElementTree.fromstring(cdm_text)
+    except ElementTree.ParseError as exc:
+        raise ValueError(f"Not a CCSDS CDM: malformed XML ({exc})") from None
+    if _xml_local_name(root.tag).lower() != "cdm":
+        raise ValueError(
+            f"Not a CCSDS CDM: root element is <{_xml_local_name(root.tag)}>, expected <cdm>"
+        )
+
+    raw = _CDMRaw()
+    segments = [el for el in root.iter() if _xml_local_name(el.tag) == "segment"]
+    in_segment = {id(el) for segment in segments for el in segment.iter()}
+
+    for element in root.iter():
+        if id(element) in in_segment or len(element):
+            continue
+        _read_xml_element(element, raw, -1)
+
+    for order, segment in enumerate(segments[:2]):
+        section = _xml_segment_section(segment, order)
+        for element in segment.iter():
+            if len(element):
+                continue
+            _read_xml_element(element, raw, section)
+
+    return _build_detail(raw, "XML")
+
+
+_XML_START = re.compile(r"\A\s*(<\?xml[^>]*\?>\s*)?(<!--.*?-->\s*)*<")
+
+
+def parse_cdm_detailed(cdm_text: str) -> ParsedCDMDetail:
+    """Parse a CDM in either KVN or XML form, keeping the extra fields.
+
+    The wire format is detected from the text: anything that opens an XML
+    document (optionally after a declaration or a comment) is read as CCSDS
+    XML, everything else as KVN. Returns a ParsedCDMDetail whose `parsed`
+    field is the same ParsedCDM the KVN reader has always produced, so both
+    formats land on one structure.
+    """
+    if _XML_START.match(cdm_text):
+        return _parse_cdm_xml(cdm_text)
+    if "CCSDS_CDM_VERS" not in cdm_text:
+        raise ValueError("Not a CCSDS CDM: missing CCSDS_CDM_VERS")
+    return _parse_cdm_kvn(cdm_text)
+
+
+def parse_cdm(cdm_text: str) -> ParsedCDM:
+    """Parse a CCSDS 508.0-B-1 Conjunction Data Message (KVN or XML).
+
+    Detect-and-dispatch entry point: the format is recognized from the text
+    and both readers produce the same ParsedCDM. Extracts relative metadata
+    (TCA, miss distance, relative speed and state, stated Pc) and per-object
+    data (designator, name, ECI state, RTN position covariance). Unknown
+    keywords are ignored; units are honored from a bracketed suffix (KVN) or a
+    `units` attribute (XML), with CCSDS defaults otherwise (note: CCSDS states
+    X/Y/Z in km but covariance in m**2). A 6x6 RTN covariance is accepted and
+    its 3x3 position block is what reaches the Pc computation.
+
+    Use parse_cdm_detailed() to also get the COMMENT lines, the stated Pc
+    method, the full 6x6 covariances and which format the message arrived in.
+    """
+    return parse_cdm_detailed(cdm_text).parsed
 
 
 def _object_covariance_eci(
@@ -296,7 +544,7 @@ def compute_pc_from_cdm(
     is rotated into ECI via its own state and the relative geometry is
     reconstructed exactly. Fallback path: only the relative state (RTN of
     object 1) is present, in which case both covariances are treated as
-    expressed in that frame — a documented approximation.
+    expressed in that frame (a documented approximation).
 
     Raises ValueError when the CDM lacks enough state information.
     """

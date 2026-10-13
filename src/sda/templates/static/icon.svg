@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WorldView">
+  <rect width="512" height="512" fill="#000000"/>
+  <circle cx="256" cy="256" r="132" fill="none" stroke="#00d4ff" stroke-width="10"/>
+  <ellipse cx="256" cy="256" rx="132" ry="52" fill="none" stroke="#00d4ff" stroke-width="6" opacity="0.55"/>
+  <ellipse cx="256" cy="256" rx="52" ry="132" fill="none" stroke="#00d4ff" stroke-width="6" opacity="0.55"/>
+  <ellipse cx="256" cy="256" rx="196" ry="86" fill="none" stroke="#ffb000" stroke-width="9"
+           transform="rotate(-28 256 256)"/>
+  <circle cx="424" cy="182" r="17" fill="#ffb000"/>
+  <circle cx="96" cy="330" r="11" fill="#ff4040"/>
+</svg>

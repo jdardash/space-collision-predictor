@@ -1,0 +1,97 @@
+{
+  "source": "DistributedMatlab/ProbabilityOfCollision/UnitTests/Pc2D_Foster_UnitTest.m lines 31-45 (AlfanoHBR, AlfanoTLimit, AlfanoAccuracy, AlfanoExpSolution, AlfanoFileNum)",
+  "repository": "https://github.com/nasa/CARA_Analysis_Tools",
+  "commit": "86ba28a",
+  "license": "NASA Open Source Agreement (NOSA) v1.3",
+  "note": "Expected values are 2D-Pc from Pc2D_Foster with a circular hard body and rel tolerance 0.001 (AlfanoAccuracy). CDM states sit at the millisecond TCA and must be advanced to the true close approach first.",
+  "cases": [
+    {
+      "case": "01",
+      "cdm": "AlfanoTestCase01.cdm",
+      "hbr_m": 15.0,
+      "expected_pc": 0.146749549,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 21600.0
+    },
+    {
+      "case": "02",
+      "cdm": "AlfanoTestCase02.cdm",
+      "hbr_m": 4.0,
+      "expected_pc": 0.006222267,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 21600.0
+    },
+    {
+      "case": "03",
+      "cdm": "AlfanoTestCase03.cdm",
+      "hbr_m": 15.0,
+      "expected_pc": 0.100351176,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 21600.0
+    },
+    {
+      "case": "04",
+      "cdm": "AlfanoTestCase04.cdm",
+      "hbr_m": 15.0,
+      "expected_pc": 0.049323406,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 21600.0
+    },
+    {
+      "case": "05",
+      "cdm": "AlfanoTestCase05.cdm",
+      "hbr_m": 10.0,
+      "expected_pc": 0.044487386,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 1419.0
+    },
+    {
+      "case": "06",
+      "cdm": "AlfanoTestCase06.cdm",
+      "hbr_m": 10.0,
+      "expected_pc": 0.004335455,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 1419.0
+    },
+    {
+      "case": "07",
+      "cdm": "AlfanoTestCase07.cdm",
+      "hbr_m": 10.0,
+      "expected_pc": 0.000158147,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 1419.0
+    },
+    {
+      "case": "08",
+      "cdm": "AlfanoTestCase08.cdm",
+      "hbr_m": 4.0,
+      "expected_pc": 0.036948008,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 10135.0
+    },
+    {
+      "case": "09",
+      "cdm": "AlfanoTestCase09.cdm",
+      "hbr_m": 6.0,
+      "expected_pc": 0.290146291,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 10800.0
+    },
+    {
+      "case": "10",
+      "cdm": "AlfanoTestCase10.cdm",
+      "hbr_m": 6.0,
+      "expected_pc": 0.290146291,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 21600.0
+    },
+    {
+      "case": "11",
+      "cdm": "AlfanoTestCase11.cdm",
+      "hbr_m": 4.0,
+      "expected_pc": 0.002672026,
+      "rel_tolerance": 0.001,
+      "t_limit_s": 1420.0
+    }
+  ]
+}

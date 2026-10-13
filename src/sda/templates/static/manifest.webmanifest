@@ -1,0 +1,27 @@
+{
+  "id": "sda-worldview-demo",
+  "name": "SDA WorldView Collision Predictor",
+  "short_name": "WorldView",
+  "description": "Offline space-domain awareness globe: SGP4 propagation, conjunction screening and collision probability, running entirely in the browser.",
+  "start_url": "../",
+  "scope": "../",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#ffb000",
+  "categories": ["education", "utilities"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

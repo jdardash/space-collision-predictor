@@ -47,7 +47,23 @@
   }
   body.mode-flir { --hud-color: #ff6600; --hud-dim: #993d00; --hud-glow: rgba(255,102,0,0.3); }
 
-  body.mode-normal { --hud-color: #ffb000; --hud-dim: #7a5500; --hud-glow: rgba(255,176,0,0.2); }
+  body.mode-noir #cesiumContainer canvas {
+    filter: grayscale(100%) contrast(1.35) brightness(0.9);
+  }
+  body.mode-noir { --hud-color: #d0d0d0; --hud-dim: #6a6a6a; --hud-glow: rgba(220,220,220,0.25); }
+
+  body.mode-snow #cesiumContainer canvas {
+    filter: grayscale(60%) contrast(1.2) brightness(0.95);
+  }
+  body.mode-snow { --hud-color: #b8d8ff; --hud-dim: #4a6a8a; --hud-glow: rgba(184,216,255,0.25); }
+
+  /* --hud-dim carries the 9px labels: #9a6c00 is 4.5:1 on black, #7a5500 was 3.1:1. */
+  body.mode-normal { --hud-color: #ffb000; --hud-dim: #9a6c00; --hud-glow: rgba(255,176,0,0.2); }
+
+  /* GLSL post-processing is live: the CSS emulation stands down so the two
+     do not stack. The HUD palette above still applies. */
+  body.gl-styles #cesiumContainer canvas { filter: none !important; }
+  body.gl-styles .filter-overlay { display: none !important; }
 
   /* ===== FILTER OVERLAYS ===== */
   .filter-overlay {
@@ -116,8 +132,18 @@
   /* ===== LEFT CONTROL PANEL ===== */
   #controls {
     top: 52px; left: 10px; width: 240px;
-    max-height: calc(100vh - 100px); overflow-y: auto;
+    /* 52 px of header above, the 64 px time bar below, 8 px of air. */
+    max-height: calc(100vh - 124px); overflow-y: auto;
     scrollbar-width: thin; scrollbar-color: rgba(255,176,0,0.3) transparent;
+  }
+  .orbit-legend {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px;
+    background: rgba(0,0,0,0.75); border: 1px solid rgba(255,176,0,0.12);
+    border-radius: 4px; margin-bottom: 8px; padding: 8px 12px;
+    font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  }
+  .orbit-legend i {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px;
   }
   .panel {
     background: rgba(0,0,0,0.75); border: 1px solid rgba(255,176,0,0.12);
@@ -316,7 +342,7 @@
 
   /* ===== INTEL FEED ===== */
   #intel-feed {
-    bottom: 38px; right: 10px; width: 300px; max-height: 200px; overflow-y: auto;
+    bottom: 72px; right: 10px; width: 300px; max-height: 200px; overflow-y: auto;
     scrollbar-width: thin; scrollbar-color: rgba(255,176,0,0.2) transparent;
   }
   .feed-item {
@@ -413,7 +439,7 @@
 
   /* ===== TIMELINE STRIP ===== */
   #timeline-strip {
-    bottom: 64px; left: 260px; right: 10px; height: 32px;
+    bottom: 64px; left: 260px; right: 320px; height: 32px;
     background: rgba(0,0,0,0.7); border: 1px solid rgba(255,176,0,0.1);
     border-radius: 3px; display: none; align-items: center;
     padding: 0 12px; backdrop-filter: blur(4px);
@@ -530,7 +556,7 @@
     #info-panel { width: 240px; }
     #intel-feed { width: 220px; }
     #search-box { width: 90vw; }
-    #timeline-strip { left: 10px; }
+    #timeline-strip { left: 10px; right: 10px; }
     #conj-detail { right: 10px; width: 90vw; }
     #risk-matrix { left: 10px; }
   }
@@ -565,11 +591,11 @@
   </div>
   <div class="header-center" id="utc-clock">--:--:-- UTC</div>
   <div class="header-right">
-    <span class="stat" id="stat-sat">SAT: --</span>
-    <span class="stat" id="stat-air">AIR: --</span>
-    <span class="stat" id="stat-mil">MIL: --</span>
-    <span class="stat" id="stat-sei">SEI: --</span>
-    <span class="stat" id="stat-conj">CONJ: --</span>
+    <span class="stat" id="stat-sat" title="Satellites being tracked">SAT: --</span>
+    <span class="stat" id="stat-air" title="Aircraft in view. Turn on Aircraft to count them">AIR: --</span>
+    <span class="stat" id="stat-mil" title="Military aircraft. Turn on Military to count them">MIL: --</span>
+    <span class="stat" id="stat-sei" title="Earthquakes in the last day. Turn on Earthquakes to count them">SEI: --</span>
+    <span class="stat" id="stat-conj" title="Close approaches found. Turn on Conjunctions to run the search">CONJ: --</span>
   </div>
 </header>
 
@@ -577,14 +603,72 @@
 <aside id="controls" class="hud hud-interactive">
   <!-- View Modes -->
   <div class="panel">
-    <h3>View Mode [1-4]</h3>
+    <h3>View Mode [1-6]</h3>
     <div class="panel-body">
       <div class="mode-buttons">
-        <button class="mode-btn active" data-mode="normal">1 NORMAL</button>
-        <button class="mode-btn" data-mode="crt">2 CRT</button>
-        <button class="mode-btn" data-mode="nvg">3 NVG</button>
-        <button class="mode-btn" data-mode="flir">4 FLIR</button>
+        <button class="mode-btn active" data-mode="normal" title="True colour">1 NORMAL</button>
+        <button class="mode-btn" data-mode="crt" title="Old monitor look, with scan lines">2 CRT</button>
+        <button class="mode-btn" data-mode="nvg" title="Night vision goggles, green">3 NVG</button>
+        <button class="mode-btn" data-mode="flir" title="Thermal camera look">4 FLIR</button>
+        <button class="mode-btn" data-mode="noir" title="Black and white film">5 NOIR</button>
+        <button class="mode-btn" data-mode="snow" title="Analogue TV static">6 SNOW</button>
       </div>
+      <label class="layer-toggle" style="padding:3px 0;">
+        <input type="checkbox" id="fx-hotpolarity">
+        <span>FLIR Black-Hot [H]</span>
+      </label>
+      <div id="style-engine" style="font-size:9px; color: var(--hud-dim,#7a5500); letter-spacing:1px;">FX: CSS</div>
+    </div>
+  </div>
+
+  <!-- Basemap -->
+  <div class="panel">
+    <h3>Basemap [I]</h3>
+    <div class="panel-body">
+      <div class="mode-buttons" style="grid-template-columns: 1fr 1fr;">
+        <button class="mode-btn active" data-basemap="earth">EARTH</button>
+        <button class="mode-btn" data-basemap="daynight">DAY / NIGHT</button>
+        <button class="mode-btn" data-basemap="night">NIGHT</button>
+        <button class="mode-btn" data-basemap="hires">HI-RES</button>
+      </div>
+      <div id="basemap-credit" style="margin-top: 6px; font-size: 9px; opacity: 0.6; min-height: 2.6em;"></div>
+    </div>
+  </div>
+
+  <!-- Satellite search (static/js/satsearch.js) -->
+  <div id="ext-satsearch"></div>
+
+  <!-- What the satellite dot colours mean. The hex values are REGIME_COLORS. -->
+  <div class="orbit-legend" id="orbit-legend">
+    <span><i style="background:#00d4ff"></i>Low orbit</span>
+    <span><i style="background:#00ff88"></i>Medium orbit</span>
+    <span><i style="background:#ffd700"></i>Geostationary</span>
+    <span><i style="background:#ff4466"></i>High or stretched</span>
+  </div>
+
+  <!-- Constellation filter (static/js/categories.js) -->
+  <div id="ext-categories"></div>
+
+  <!-- Live video from the ISS (static/js/isscam.js) -->
+  <div id="ext-isscam"></div>
+
+  <!-- Camera -->
+  <div class="panel">
+    <h3>Camera [7-0]</h3>
+    <div class="panel-body">
+      <div class="mode-buttons">
+        <button class="mode-btn active" data-cam="free">FREE</button>
+        <button class="mode-btn" data-cam="chase">7 CHASE</button>
+        <button class="mode-btn" data-cam="cockpit">8 COCKPIT</button>
+        <button class="mode-btn" data-cam="orbit">9 ORBIT</button>
+        <button class="mode-btn" data-cam="tour">0 TOUR</button>
+      </div>
+      <div class="slider-row">
+        <label>DWELL</label>
+        <input type="range" id="cam-dwell" min="3" max="30" value="8" step="1">
+        <span class="val" id="cam-dwell-val">8s</span>
+      </div>
+      <div id="cam-status" style="font-size:9px; color: var(--hud-dim,#7a5500); letter-spacing:1px;">CAM: FREE</div>
     </div>
   </div>
 
@@ -622,6 +706,11 @@
         <span class="count" id="count-conj">0</span>
       </label>
       <label class="layer-toggle">
+        <input type="checkbox" id="layer-covariance">
+        <span>Cov Ellipsoids [V]</span>
+        <span class="count" id="count-cov">0</span>
+      </label>
+      <label class="layer-toggle">
         <input type="checkbox" id="layer-traffic">
         <span>Traffic [T]</span>
         <span class="count" id="count-trf">0</span>
@@ -631,6 +720,50 @@
         <span>CCTV [C]</span>
         <span class="count" id="count-cctv">0</span>
       </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-sensors">
+        <span>Sensor FOV [E]</span>
+        <span class="count" id="count-sen">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-trails">
+        <span>Trails [A]</span>
+        <span class="count" id="count-trail">0</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-declutter" checked>
+        <span>Label Declutter [X]</span>
+        <span class="count" id="count-declutter">0</span>
+      </label>
+      <div class="slider-row">
+        <label>TRAIL LEN</label>
+        <input type="range" id="trail-length" min="10" max="240" value="60" step="10">
+        <span class="val" id="trail-length-val">60</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data feeds (static/js/layers.js) -->
+  <div id="ext-feeds"></div>
+
+  <!-- Catalog Source -->
+  <div class="panel collapsed">
+    <h3>Catalog</h3>
+    <div class="panel-body">
+      <select id="cat-group" title="TLE catalog group"
+        style="width:100%;background:rgba(255,176,0,0.05);border:1px solid rgba(255,176,0,0.15);
+        color:var(--hud-color);padding:4px;font-family:inherit;font-size:10px;border-radius:2px;">
+        <option value="">BUNDLED CATALOG</option>
+        <option value="active">CELESTRAK ACTIVE (FULL)</option>
+        <option value="starlink">STARLINK</option>
+        <option value="stations">STATIONS</option>
+        <option value="visual">VISUAL</option>
+        <option value="geo">GEOSTATIONARY</option>
+        <option value="gps-ops">GPS OPS</option>
+      </select>
+      <div id="cat-status" style="margin-top:6px;font-size:9px;color:var(--hud-dim);letter-spacing:1px;">
+        SOURCE: --
+      </div>
     </div>
   </div>
 
@@ -669,6 +802,10 @@
         <input type="range" id="fx-pixelate" min="0" max="100" value="0">
         <span class="val" id="fx-pix-val">0</span>
       </div>
+      <label class="layer-toggle" style="padding:3px 0;">
+        <input type="checkbox" id="fx-glow">
+        <span>Detection Glow [B]</span>
+      </label>
     </div>
   </div>
 
@@ -713,6 +850,20 @@
     </div>
   </div>
 
+  <!-- Contacts Roster -->
+  <div class="panel" id="roster-panel">
+    <h3>Contacts [R]</h3>
+    <div class="panel-body">
+      <div id="roster-list" style="max-height:170px;overflow-y:auto;"></div>
+      <div id="roster-empty" style="font-size:9px;color:var(--hud-dim);letter-spacing:1px;">
+        NO CONTACTS. SELECT A SATELLITE AND PRESS R.
+      </div>
+    </div>
+  </div>
+
+  <!-- Pass prediction (static/js/passpanel.js) -->
+  <div id="ext-passes"></div>
+
   <!-- Conjunction Analysis -->
   <div class="panel collapsed">
     <h3>Conjunction Analysis</h3>
@@ -737,6 +888,9 @@
     </div>
   </div>
 
+  <!-- Agent chat (static/js/agentpanel.js) -->
+  <div id="ext-agent"></div>
+
   <!-- Links -->
   <div class="panel" style="text-align:center;">
     <a href="/" style="color:var(--hud-dim);font-size:9px;letter-spacing:2px;text-decoration:none;">
@@ -744,6 +898,8 @@
     </a>
     <span style="color:var(--hud-dim);margin:0 8px;">|</span>
     <span style="color:var(--hud-dim);font-size:9px;letter-spacing:1px;cursor:pointer;" id="btn-help">KEYS [?]</span>
+    <button class="btn-action" id="btn-copy-link" style="margin-top:6px;font-size:9px;padding:5px;">COPY LINK [L]</button>
+    <div id="copy-link-status" style="margin-top:4px;font-size:9px;letter-spacing:1px;color:var(--hud-dim);min-height:11px;"></div>
   </div>
 </aside>
 
@@ -751,6 +907,7 @@
 <aside id="info-panel" class="hud hud-interactive hidden">
   <h3>TRACKED ENTITY</h3>
   <div id="entity-info"></div>
+  <button class="btn-dismiss" id="btn-pin">PIN TO CONTACTS [R]</button>
   <button class="btn-dismiss" id="btn-dismiss">DISMISS [ESC]</button>
 </aside>
 
@@ -776,6 +933,8 @@
       <div class="cd-section-title">Pc Evolution (Time to TCA)</div>
       <div class="cd-chart" id="cd-pc-trend"></div>
     </div>
+    <!-- Pc methods, avoidance options and breakup preview (static/js/conjactions.js) -->
+    <div id="ext-conjactions"></div>
   </div>
 </div>
 
@@ -808,9 +967,9 @@
   <button class="time-btn" id="time-play" title="Play/Pause">&#9654;</button>
   <button class="time-btn" id="time-ff" title="Step forward 1 hour">&#9654;&#9654;</button>
   <select class="time-speed" id="time-speed" title="Playback speed">
-    <option value="1">1x</option>
+    <option value="1" selected>1x</option>
     <option value="10">10x</option>
-    <option value="60" selected>60x</option>
+    <option value="60">60x</option>
     <option value="600">600x</option>
     <option value="3600">3600x</option>
   </select>
@@ -824,6 +983,8 @@
   <span id="coords">LAT: --.---- LON: --.----</span>
   <span id="cam-alt">ALT: -- km</span>
   <span id="layer-status">LAYERS: SAT</span>
+  <span id="prop-source" title="Where satellite positions come from">PROP: --</span>
+  <span id="server-track" title="Server SGP4 track feed (/ws/positions)">SRV: OFF</span>
   <span class="right" id="fps-display">FPS: --</span>
 </footer>
 
@@ -857,6 +1018,17 @@
     <div class="key-row"><kbd>2</kbd> <span>CRT mode</span></div>
     <div class="key-row"><kbd>3</kbd> <span>Night Vision (NVG)</span></div>
     <div class="key-row"><kbd>4</kbd> <span>FLIR / Thermal</span></div>
+    <div class="key-row"><kbd>5</kbd> <span>Noir</span></div>
+    <div class="key-row"><kbd>6</kbd> <span>Snow / interference</span></div>
+    <div class="key-row"><kbd>H</kbd> <span>FLIR white-hot / black-hot</span></div>
+  </div>
+  <div class="key-group">
+    <h4>CAMERA</h4>
+    <div class="key-row"><kbd>7</kbd> <span>Chase the selected object</span></div>
+    <div class="key-row"><kbd>8</kbd> <span>Cockpit view on the selected object</span></div>
+    <div class="key-row"><kbd>9</kbd> <span>Orbit around the selected object</span></div>
+    <div class="key-row"><kbd>0</kbd> <span>Tour the location presets</span></div>
+    <div class="key-row"><kbd>Esc</kbd> <span>Back to free camera</span></div>
   </div>
   <div class="key-group">
     <h4>DATA LAYERS</h4>
@@ -867,18 +1039,37 @@
     <div class="key-row"><kbd>Q</kbd> <span>Toggle earthquakes</span></div>
     <div class="key-row"><kbd>T</kbd> <span>Toggle traffic</span></div>
     <div class="key-row"><kbd>J</kbd> <span>Toggle conjunctions</span></div>
+    <div class="key-row"><kbd>V</kbd> <span>Toggle covariance ellipsoids (TLE-age estimate)</span></div>
     <div class="key-row"><kbd>C</kbd> <span>Toggle CCTV</span></div>
+    <div class="key-row"><kbd>E</kbd> <span>Toggle sensor field-of-view cones</span></div>
+    <div class="key-row"><kbd>A</kbd> <span>Toggle trails for tracked objects</span></div>
+    <div class="key-row"><kbd>X</kbd> <span>Toggle label declutter</span></div>
   </div>
   <div class="key-group">
     <h4>TIME CONTROL</h4>
-    <div class="key-row"><kbd>Space</kbd> <span>Play / Pause time</span></div>
+    <div class="key-row"><kbd>Space</kbd> <span>Play / Pause the simulation clock</span></div>
+    <div class="key-row"><kbd>K</kbd> <span>Snap back to live (now, 1x)</span></div>
+    <div class="key-row"><kbd>,</kbd> <span>Step back 1 hour</span></div>
+    <div class="key-row"><kbd>.</kbd> <span>Step forward 1 hour</span></div>
+    <div class="key-row"><kbd>[</kbd> <span>Slower playback</span></div>
+    <div class="key-row"><kbd>]</kbd> <span>Faster playback</span></div>
+  </div>
+  <div class="key-group">
+    <h4>CONTACTS AND SHARING</h4>
+    <div class="key-row"><kbd>R</kbd> <span>Pin / unpin selected object in Contacts</span></div>
+    <div class="key-row"><kbd>N</kbd> <span>Fly to next contact</span></div>
+    <div class="key-row"><kbd>L</kbd> <span>Copy a share link to this exact view</span></div>
+    <div class="key-row"><kbd>W</kbd> <span>Toggle the server track feed</span></div>
   </div>
   <div class="key-group">
     <h4>CONTROLS</h4>
     <div class="key-row"><kbd>D</kbd> <span>Toggle detection mode (off/sparse/full)</span></div>
-    <div class="key-row"><kbd>B</kbd> <span>Toggle bloom</span></div>
+    <div class="key-row"><kbd>B</kbd> <span>Toggle the detection glow (bloom)</span></div>
     <div class="key-row"><kbd>G</kbd> <span>Global view</span></div>
+    <div class="key-row"><kbd>I</kbd> <span>Cycle basemap (Earth, day / night, night, hi-res)</span></div>
     <div class="key-row"><kbd>/</kbd> <span>Search location</span></div>
+    <div class="key-row"><kbd>U</kbd> <span>Find a satellite by name or NORAD id</span></div>
+    <div class="key-row"><kbd>Y</kbd> <span>Ask the agent</span></div>
     <div class="key-row"><kbd>?</kbd> <span>This help</span></div>
     <div class="key-row"><kbd>Esc</kbd> <span>Close panel / deselect</span></div>
   </div>
@@ -897,21 +1088,49 @@
     var nativeFetch = window.fetch.bind(window);
     window.fetch = function (input, init) {
       var url = typeof input === "string" ? input : (input && input.url) || "";
+      // The sensor endpoints sit outside /api/, so they are matched first.
+      // Coverage needs a live propagation, which a baked build cannot do; the
+      // empty list makes the caller skip the highlight instead of guessing.
+      if (/\/sensors\/coverage/.test(url)) {
+        return Promise.resolve(new Response('{"coverage": []}', {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }));
+      }
+      if (/\/sensors(\?|$)/.test(url)) return nativeFetch("data/sensors.json");
       var match = /\/api\/([a-z-]+)/.exec(url);
       if (!match) return nativeFetch(input, init);
       if (BAKED.indexOf(match[1]) !== -1) {
         return nativeFetch("data/" + match[1] + ".json");
       }
-      return Promise.resolve(new Response("[]", {
+      // Everything else (live proxies, Pc history) has no baked snapshot. An
+      // empty object is the honest answer: callers must render their own
+      // "no data" state rather than invent one.
+      return Promise.resolve(new Response("{}", {
         status: 200,
         headers: { "Content-Type": "application/json" }
       }));
     };
     window.WebSocket = function () {
-      return { close: function () {}, send: function () {}, readyState: 3 };
+      return {
+        close: function () {}, send: function () {}, readyState: 3,
+        addEventListener: function () {}, removeEventListener: function () {}
+      };
     };
   })();
 </script>
+
+<!-- Relative paths resolve to /static/js/... when FastAPI serves /worldview and
+     to <demo-root>/static/js/... in the baked build, so no flag branch here. -->
+<script src="static/js/styles.js"></script>
+<script src="static/js/tactical.js"></script>
+<script src="static/js/satsearch.js"></script>
+<script src="static/js/layers.js"></script>
+<script src="static/js/passpanel.js"></script>
+<script src="static/js/agentpanel.js"></script>
+<script src="static/js/isscam.js"></script>
+<script src="static/js/categories.js"></script>
+<script src="static/js/conjactions.js"></script>
 
 <script>
 // ============================================================
@@ -921,6 +1140,11 @@
 // ============================================================
 
 var API = '';
+// The static demo is served from a subdirectory on GitHub Pages, so bundled
+// assets are addressed relatively there and absolutely when FastAPI serves the
+// page at /worldview.
+var IS_STATIC = !!window.STATIC_DEMO;
+var WORKER_URL = IS_STATIC ? 'static/js/sgp4-worker.js' : '/static/js/sgp4-worker.js';
 var REFRESH_SATS_MS = 10000;
 var REFRESH_FLIGHTS_MS = 15000;
 var REFRESH_MIL_MS = 30000;
@@ -962,10 +1186,47 @@ var cctvEntities = {};
 var selectedEntity = null;
 var detectionMode = false;
 var detectionLevel = 'off'; // off, sparse, full
+// normal, crt, nvg, flir, noir, snow (mirrored into the share link)
+var currentViewMode = 'normal';
 
 var layerState = {
   satellites: true, orbits: false, flights: false, military: false,
-  quakes: false, traffic: false, cctv: false, conjunctions: true
+  quakes: false, traffic: false, cctv: false, conjunctions: true,
+  covariance: false, sensors: false, trails: false, declutter: true
+};
+
+// ===== C2: STYLES, CAMERA, TRAILS, DECLUTTER, SENSOR FOV =====
+var styleFx = null;          // WorldViewStyles manager, null until initCesium
+var glStylesLive = false;    // true when the GLSL stages are actually running
+var trailStore = null;       // WorldViewTactical trail store
+var labelArbiter = null;     // WorldViewTactical label arbiter
+var trailLength = 60;
+var lastTrailSync = 0;
+var lastDeclutter = 0;
+
+var camState = {
+  mode: 'free',              // free, chase, cockpit, orbit, tour
+  targetKind: null,          // satellite or entity
+  targetId: null,
+  lastPos: null,
+  forward: null,
+  orbitAngle: 0,
+  orbitRateDegS: 8,
+  tourIndex: 0,
+  tourDwellS: 8,
+  tourNext: 0,
+  savedInputs: true
+};
+
+var sensorState = {
+  loaded: false,
+  loading: false,
+  sensors: [],
+  entities: [],
+  shellAltKm: 550,
+  covering: {},              // sensor name -> true when the selection is inside
+  lastCoverageId: null,
+  lastCoverageAt: 0
 };
 
 // ===== DOM HELPERS =====
@@ -1027,6 +1288,167 @@ function hideLoading() {
   }
 }
 
+// ===== BASEMAP =====
+// Every source is public and needs no key. The NASA layers come from GIBS in
+// its Web Mercator tiling, the grid Cesium's default scheme already expects.
+// Do not switch these to the GIBS geographic endpoint with a stock
+// GeographicTilingScheme: that grid is 2x1, 3x2, 5x3 tiles rather than a
+// doubling pyramid, and the mismatch draws the world shrunk into one corner
+// of the globe. The set ends at level 8, which is why these soften once zoomed
+// in to a city; HI-RES is the one to zoom with. The CartoDB dark tiles this
+// page used to default to now come back as an "API KEY REQUIRED" watermark, so
+// they are gone.
+function gibsImagery(layerPath, ext, credit) {
+  return new Cesium.UrlTemplateImageryProvider({
+    url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' + layerPath +
+      '/GoogleMapsCompatible_Level8/{z}/{y}/{x}.' + ext,
+    maximumLevel: 8,
+    credit: new Cesium.Credit(credit),
+  });
+}
+function blueMarble() {
+  return gibsImagery('BlueMarble_ShadedRelief_Bathymetry/default', 'jpeg', 'NASA Blue Marble, GIBS');
+}
+function blackMarble() {
+  return gibsImagery('VIIRS_Black_Marble/default/2016-01-01', 'png', 'NASA Black Marble, GIBS');
+}
+
+// layers() returns bottom-to-top specs. dayAlpha only has an effect while the
+// globe is lit, which is what `lighting` switches on.
+var BASEMAPS = {
+  earth: {
+    label: 'EARTH (NASA BLUE MARBLE)',
+    credit: 'NASA Blue Marble via GIBS',
+    lighting: false,
+    layers: function() { return [{ provider: blueMarble() }]; }
+  },
+  // Daylight on the sunlit side, city lights past the terminator. The sun
+  // follows the simulation clock, so scrubbing time sweeps the terminator.
+  daynight: {
+    label: 'DAY / NIGHT (NASA)',
+    credit: 'NASA Blue Marble and Black Marble via GIBS',
+    lighting: true,
+    layers: function() {
+      return [{ provider: blueMarble() }, { provider: blackMarble(), dayAlpha: 0.0, brightness: 2.0 }];
+    }
+  },
+  night: {
+    label: 'NIGHT (NASA BLACK MARBLE)',
+    credit: 'NASA Black Marble via GIBS',
+    lighting: false,
+    layers: function() { return [{ provider: blackMarble(), brightness: 1.5 }]; }
+  },
+  hires: {
+    label: 'HI-RES (ESRI WORLD IMAGERY)',
+    credit: 'Esri, Maxar, Earthstar Geographics',
+    lighting: false,
+    layers: function() {
+      return [{
+        provider: new Cesium.UrlTemplateImageryProvider({
+          url: 'https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          maximumLevel: 19,
+          credit: new Cesium.Credit('Esri, Maxar, Earthstar Geographics'),
+        })
+      }];
+    }
+  }
+};
+var DEFAULT_BASEMAP = 'earth';
+var currentBasemap = DEFAULT_BASEMAP;
+var basemapLayers = [];
+var basemapLocked = false;
+
+function setBasemap(name, quiet) {
+  // name can come straight from a share link, and "constructor" is a member of
+  // every object, so only the registry's own entries count.
+  if (basemapLocked || !Object.prototype.hasOwnProperty.call(BASEMAPS, name)) return;
+  var entry = BASEMAPS[name];
+  basemapLayers.forEach(function(layer) { viewer.imageryLayers.remove(layer, true); });
+  // Inserted from index 0 up, which keeps the basemap underneath any imagery added later.
+  basemapLayers = entry.layers().map(function(spec, i) {
+    var layer = viewer.imageryLayers.addImageryProvider(spec.provider, i);
+    if (spec.dayAlpha !== undefined) layer.dayAlpha = spec.dayAlpha;
+    if (spec.brightness !== undefined) layer.brightness = spec.brightness;
+    return layer;
+  });
+  viewer.scene.globe.enableLighting = entry.lighting;
+  currentBasemap = name;
+  document.querySelectorAll('.mode-btn[data-basemap]').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.basemap === name);
+  });
+  // Cesium's credit box is detached (see creditContainer below), so name the source here.
+  var credit = $('basemap-credit');
+  if (credit) credit.textContent = 'Imagery: ' + entry.credit;
+  if (!quiet) addIntelItem('Basemap: ' + entry.label);
+}
+
+function cycleBasemap() {
+  var names = Object.keys(BASEMAPS);
+  setBasemap(names[(names.indexOf(currentBasemap) + 1) % names.length]);
+}
+
+// Google's photorealistic tiles replace the globe surface, so while they are
+// loaded no basemap is on screen and the switch would only misreport.
+function lockBasemap(source) {
+  basemapLocked = true;
+  document.querySelectorAll('.mode-btn[data-basemap]').forEach(function(b) {
+    b.classList.remove('active');
+    b.disabled = true;
+  });
+  var credit = $('basemap-credit');
+  if (credit) credit.textContent = 'Imagery: ' + source;
+}
+
+// ===== EXTENSION MODULES =====
+// Each static/js module listed here owns one sidebar panel and gets the same
+// context object. A module that is missing or throws must never take the globe
+// down with it, so each one starts inside its own try.
+var EXTENSIONS = [
+  { global: 'SDASatSearch', mount: 'ext-satsearch' },
+  { global: 'SDALayers', mount: 'ext-feeds' },
+  { global: 'SDAPassPanel', mount: 'ext-passes' },
+  { global: 'SDAAgentPanel', mount: 'ext-agent' },
+  { global: 'SDAIssCam', mount: 'ext-isscam' },
+  { global: 'SDACategories', mount: 'ext-categories' },
+  { global: 'SDAConjActions', mount: 'ext-conjactions' }
+];
+
+function wirePanelCollapse(h3) {
+  h3.addEventListener('click', function(e) {
+    if (e.target.tagName === 'INPUT') return;
+    this.parentElement.classList.toggle('collapsed');
+  });
+}
+
+function initExtensions() {
+  EXTENSIONS.forEach(function(ext) {
+    var mod = window[ext.global];
+    var mount = $(ext.mount);
+    if (!mod || !mount) return;
+    try {
+      mod.init({
+        viewer: viewer,
+        satEngine: satEngine,
+        selectSatellite: selectSatellite,
+        addIntelItem: addIntelItem,
+        api: API,
+        isStatic: IS_STATIC,
+        mount: mount,
+        getVisibleLayers: function() {
+          return Object.keys(layerState).filter(function(k) { return layerState[k]; });
+        },
+        simNow: simNow,
+        refreshSatVisibility: refreshSatVisibility,
+        getConjunction: function() { return openConjunction; },
+        getConjunctions: function() { return conjEvents.slice(); }
+      });
+      mount.querySelectorAll('.panel h3').forEach(wirePanelCollapse);
+    } catch (e) {
+      addIntelItem(ext.global + ' did not start: ' + e.message);
+    }
+  });
+}
+
 // ===== CESIUM INIT =====
 function initCesium() {
   setLoadingProgress(10, 'LOADING GLOBE ENGINE...');
@@ -1058,22 +1480,17 @@ function initCesium() {
     },
   });
 
-  // Dark basemap
   viewer.imageryLayers.removeAll();
-  viewer.imageryLayers.addImageryProvider(
-    new Cesium.UrlTemplateImageryProvider({
-      url: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-      maximumLevel: 18,
-      credit: new Cesium.Credit('CartoDB'),
-    })
-  );
+  // Also sets globe.enableLighting, which the day/night basemap needs on.
+  setBasemap(currentBasemap, true);
 
   // Globe styling
   var scene = viewer.scene;
   var globe = scene.globe;
   scene.backgroundColor = Cesium.Color.BLACK;
-  globe.baseColor = Cesium.Color.fromCssColorString('#0a0a0a');
-  globe.enableLighting = false;
+  // What the globe shows wherever an imagery tile has not arrived yet. Near
+  // black read as a hole in the sky for the first half minute on a slow renderer.
+  globe.baseColor = Cesium.Color.fromCssColorString('#0b1c2c');
   globe.showGroundAtmosphere = false;
 
   scene.skyAtmosphere.show = true;
@@ -1082,6 +1499,18 @@ function initCesium() {
   scene.skyAtmosphere.brightnessShift = -0.3;
   scene.sun.show = false;
   scene.moon.show = false;
+
+  // Simulation clock. Everything that propagates reads this through simNow(),
+  // so the scrub slider, the speed multiplier and the live button move the
+  // whole page at once instead of each layer keeping its own idea of "now".
+  var clock = viewer.clock;
+  clock.startTime = Cesium.JulianDate.fromDate(new Date(Date.now() - 12 * 3600000));
+  clock.stopTime = Cesium.JulianDate.fromDate(new Date(Date.now() + 12 * 3600000));
+  clock.currentTime = Cesium.JulianDate.now();
+  clock.clockRange = Cesium.ClockRange.UNBOUNDED;
+  clock.clockStep = Cesium.ClockStep.SYSTEM_CLOCK_MULTIPLIER;
+  clock.multiplier = 1;
+  clock.shouldAnimate = true;
 
   // Initial camera
   viewer.camera.setView({
@@ -1119,7 +1548,63 @@ function initCesium() {
     }
   }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
+  initStyleEngine(scene);
+  initTactical(scene);
+
   setLoadingProgress(30, 'GLOBE ENGINE READY');
+}
+
+// ===== GLSL POST-PROCESS STYLES =====
+// The registry and the shaders live in static/js/styles.js. If the browser
+// cannot compile or run them the manager reports supported=false and the page
+// keeps the original CSS filter emulation.
+function initStyleEngine(scene) {
+  if (!window.WorldViewStyles) {
+    setStyleEngineLabel('FX: CSS (registry missing)');
+    return;
+  }
+  styleFx = WorldViewStyles.create(Cesium, scene, {
+    onFallback: function (reason) {
+      glStylesLive = false;
+      document.body.classList.remove('gl-styles');
+      setStyleEngineLabel('FX: CSS (' + reason + ')');
+      addIntelItem('Post-processing fell back to CSS: ' + reason);
+      updatePostProcessing();
+    }
+  });
+  glStylesLive = !!styleFx.supported;
+  if (glStylesLive) {
+    document.body.classList.add('gl-styles');
+    setStyleEngineLabel('FX: GLSL');
+  } else {
+    setStyleEngineLabel('FX: CSS (' + (styleFx.reason || 'unavailable') + ')');
+  }
+  // One driver for the animated shader uniforms and the tactical overlays.
+  var lastTickMs = performance.now();
+  scene.postRender.addEventListener(function () {
+    var nowMs = performance.now();
+    var dt = Math.min(0.25, (nowMs - lastTickMs) / 1000);
+    lastTickMs = nowMs;
+    if (styleFx && glStylesLive) styleFx.tick(dt);
+    tacticalFrame(nowMs);
+  });
+}
+
+function setStyleEngineLabel(text) {
+  var el = $('style-engine');
+  if (el) el.textContent = text;
+}
+
+// ===== TACTICAL OVERLAYS (trails, declutter) =====
+function initTactical(scene) {
+  if (!window.WorldViewTactical) return;
+  trailStore = WorldViewTactical.createTrailStore(Cesium, scene, {
+    maxPoints: trailLength, width: 2.0
+  });
+  labelArbiter = WorldViewTactical.createLabelArbiter(Cesium, { cellPx: 36 });
+  // The camera runs before the render so a chase or orbit pose lands on the
+  // frame it was computed for rather than one frame late.
+  scene.preRender.addEventListener(function () { cameraFrame(); });
 }
 
 // ===== INTEL FEED =====
@@ -1150,26 +1635,175 @@ var LABEL_CAPS = { zoom: 60, sparse: 40, full: 150 };
 
 var satEngine = {
   active: false,
-  sats: [],            // { noradId, name, regime, color, satrec, point, label, lastLat, lastLon, lastAlt, lastVel }
+  sats: [],            // { noradId, name, regime, color, satrec, point, label, lastLat, lastLon, lastAlt, lastVel, located }
   byNoradId: {},
   points: null,        // Cesium.PointPrimitiveCollection
   labels: null,        // Cesium.LabelCollection
-  cursor: 0,           // round-robin propagation index
+  cursor: 0,           // round-robin propagation index (main-thread fallback only)
   batchDivisor: 3,     // propagate 1/3 of the catalog per frame (~20 Hz each at 60 FPS)
   hoveredId: null,
   selectedId: null,
   lastLabelRebuild: 0,
+  group: '',           // '' means the process catalog, otherwise a CelesTrak group
+  source: 'catalog',
+  // Worker propagation (satvis design). When the worker is up, the main thread
+  // never calls satellite.propagate for the catalog at all.
+  worker: null,
+  workerReady: false,
+  workerPending: false,
+  workerBuffer: null,  // recycled ArrayBuffer, handed back and forth
+  workerLastPost: 0,
+  workerFailed: false,
+  workerHz: 20,
 };
 var selectedOrbitEntity = null;
+var selectedGroundTrackEntity = null;
 
+// Every propagation in the page reads the simulation clock, so the time
+// controls, the share link and the worker all agree on one instant.
 function simNow() {
-  return timeState.live ? new Date() : new Date(timeState.epoch.getTime());
+  if (viewer && viewer.clock) return Cesium.JulianDate.toDate(viewer.clock.currentTime);
+  return new Date();
 }
+
+function tleEndpoint(group) {
+  return API + '/api/tles' + (group ? '?group=' + encodeURIComponent(group) : '');
+}
+
+function setPropSource(text) {
+  var el = $('prop-source');
+  if (el) el.textContent = 'PROP: ' + text;
+}
+
+// --- Worker plumbing -------------------------------------------------------
+
+function initSatWorker() {
+  if (satEngine.worker || satEngine.workerFailed) return;
+  if (typeof Worker === 'undefined') { satEngine.workerFailed = true; return; }
+  try {
+    satEngine.worker = new Worker(WORKER_URL);
+  } catch (e) {
+    satEngine.workerFailed = true;
+    satEngine.worker = null;
+    return;
+  }
+  satEngine.worker.onerror = function () {
+    satEngine.workerFailed = true;
+    satEngine.workerReady = false;
+    satEngine.workerPending = false;
+    setPropSource('MAIN THREAD');
+    addIntelItem('SGP4 worker unavailable; propagating on the main thread');
+  };
+  satEngine.worker.onmessage = function (event) {
+    var msg = event.data || {};
+    if (msg.type === 'ready') {
+      satEngine.workerReady = true;
+      satEngine.workerPending = false;
+      setPropSource('WORKER ' + msg.count);
+    } else if (msg.type === 'positions') {
+      applyWorkerPositions(msg);
+    } else if (msg.type === 'track') {
+      applyWorkerTrack(msg);
+    } else if (msg.type === 'error') {
+      satEngine.workerPending = false;
+    }
+  };
+}
+
+function postCatalogToWorker() {
+  if (!satEngine.worker || satEngine.workerFailed) return;
+  var payload = [];
+  for (var i = 0; i < satEngine.sats.length; i++) {
+    var s = satEngine.sats[i];
+    payload.push({ norad_id: s.noradId, line1: s.line1, line2: s.line2 });
+  }
+  satEngine.workerReady = false;
+  satEngine.workerPending = false;
+  satEngine.workerBuffer = null;
+  satEngine.worker.postMessage({ type: 'catalog', sats: payload });
+}
+
+// The worker packs 4 floats per object: longitude, latitude (radians),
+// altitude (km) and speed (km/s). A NaN longitude means no SGP4 solution.
+function applyWorkerPositions(msg) {
+  satEngine.workerPending = false;
+  var buffer = msg.buffer;
+  if (!buffer) return;
+  var n = Math.min(msg.count || 0, satEngine.sats.length);
+  var view = new Float32Array(buffer, 0, n * 4);
+  for (var i = 0; i < n; i++) {
+    var s = satEngine.sats[i];
+    var lon = view[i * 4];
+    if (!isFinite(lon)) { s.located = false; if (s.point) s.point.show = false; continue; }
+    var lat = view[i * 4 + 1];
+    var altKm = view[i * 4 + 2];
+    s.located = true;
+    s.lastLon = Cesium.Math.toDegrees(lon);
+    s.lastLat = Cesium.Math.toDegrees(lat);
+    s.lastAlt = altKm;
+    s.lastVel = view[i * 4 + 3];
+    if (!s.serverTracked) {
+      s.point.position = Cesium.Cartesian3.fromRadians(lon, lat, altKm * 1000);
+      s.point.show = !s.hidden;
+      if (s.label) s.label.position = s.point.position;
+    }
+  }
+  satEngine.workerBuffer = buffer; // recycle on the next request
+}
+
+function applyWorkerTrack(msg) {
+  var s = satEngine.byNoradId[msg.id];
+  if (!s || satEngine.selectedId !== msg.id) return;
+  removeSelectedTrack();
+
+  var orbit = msg.orbit;
+  var positions = [];
+  for (var i = 0; i + 2 < orbit.length; i += 3) {
+    positions.push(Cesium.Cartesian3.fromRadians(orbit[i], orbit[i + 1], orbit[i + 2] * 1000));
+  }
+  if (positions.length >= 2) {
+    selectedOrbitEntity = viewer.entities.add({
+      id: 'selected-orbit',
+      polyline: {
+        positions: positions, width: 1.5,
+        material: new Cesium.ColorMaterialProperty(Cesium.Color.fromAlpha(s.color, 0.45)),
+      }
+    });
+  }
+
+  var ground = msg.ground;
+  var groundPts = [];
+  for (var k = 0; k + 1 < ground.length; k += 2) {
+    groundPts.push(Cesium.Cartesian3.fromRadians(ground[k], ground[k + 1], 0));
+  }
+  if (groundPts.length >= 2) {
+    selectedGroundTrackEntity = viewer.entities.add({
+      id: 'selected-ground-track',
+      polyline: {
+        positions: groundPts, width: 1.0, clampToGround: false,
+        material: new Cesium.PolylineDashMaterialProperty({
+          color: Cesium.Color.fromAlpha(s.color, 0.35), dashLength: 10,
+        }),
+      }
+    });
+  }
+  viewer.scene.requestRender();
+}
+
+function removeSelectedTrack() {
+  if (selectedOrbitEntity) { viewer.entities.remove(selectedOrbitEntity); selectedOrbitEntity = null; }
+  if (selectedGroundTrackEntity) {
+    viewer.entities.remove(selectedGroundTrackEntity);
+    selectedGroundTrackEntity = null;
+  }
+}
+
+// --- Catalog ---------------------------------------------------------------
 
 async function initSatEngine() {
   if (typeof satellite === 'undefined') return false; // CDN blocked: fall back
   try {
-    var resp = await fetch(API + '/api/tles');
+    var resp = await fetch(tleEndpoint(satEngine.group));
     if (!resp.ok) return false;
     var data = await resp.json();
     if (!(data.satellites || []).length) return false;
@@ -1179,14 +1813,30 @@ async function initSatEngine() {
       satEngine.labels = viewer.scene.primitives.add(new Cesium.LabelCollection());
       viewer.scene.preUpdate.addEventListener(satEngineFrame);
     }
+    initSatWorker();
     buildSatCatalog(data.satellites);
+    satEngine.source = data.source || 'catalog';
     satEngine.active = true;
-    $('count-sat').textContent = satEngine.sats.length;
-    $('stat-sat').textContent = 'SAT: ' + satEngine.sats.length;
+    updateCatalogStatus();
     return true;
   } catch (e) {
     return false;
   }
+}
+
+function updateCatalogStatus() {
+  $('count-sat').textContent = satEngine.sats.length;
+  $('stat-sat').textContent = 'SAT: ' + satEngine.sats.length;
+  var el = $('cat-status');
+  if (el) {
+    el.textContent = 'SOURCE: ' + String(satEngine.source).toUpperCase() +
+      ' / ' + satEngine.sats.length + ' OBJ';
+  }
+  if (!satEngine.worker || satEngine.workerFailed) setPropSource('MAIN THREAD');
+  // The record list was just replaced; modules holding per-satellite state start over.
+  document.dispatchEvent(new CustomEvent('sda:catalog-loaded', {
+    detail: { count: satEngine.sats.length }
+  }));
 }
 
 function buildSatCatalog(list) {
@@ -1198,16 +1848,26 @@ function buildSatCatalog(list) {
   satEngine.byNoradId = {};
   satEngine.cursor = 0;
 
+  var useWorker = !!satEngine.worker && !satEngine.workerFailed;
   for (var i = 0; i < list.length; i++) {
     var rec = list[i];
-    var satrec;
-    try { satrec = satellite.twoline2satrec(rec.line1, rec.line2); } catch (e) { continue; }
-    if (!satrec) continue;
+    var satrec = null;
+    // The worker keeps its own satrec cache. The main thread still needs one
+    // for the fallback path and for the orbital period used by the HUD, but
+    // building 11k satrecs twice is wasteful, so skip it when the worker owns
+    // propagation and build lazily if the worker later fails.
+    if (!useWorker) {
+      try { satrec = satellite.twoline2satrec(rec.line1, rec.line2); } catch (e) { satrec = null; }
+      if (!satrec) continue;
+    }
     var color = Cesium.Color.fromCssColorString(rec.regime_color || '#00d4ff');
     var s = {
       noradId: rec.norad_id, name: rec.name, regime: rec.regime, color: color,
+      line1: rec.line1, line2: rec.line2,
       satrec: satrec, point: null, label: null,
       lastLat: 0, lastLon: 0, lastAlt: 0, lastVel: 0,
+      located: false, // true while the last propagation gave it a position
+      serverTracked: false,
     };
     s.point = satEngine.points.add({
       position: Cesium.Cartesian3.fromDegrees(0, 0, 0),
@@ -1222,19 +1882,50 @@ function buildSatCatalog(list) {
     satEngine.sats.push(s);
     satEngine.byNoradId[rec.norad_id] = s;
   }
+  if (useWorker) postCatalogToWorker();
+  renderRoster();
+  applyPendingShareSelection();
+  if (serverTrack.socket) sendServerTrackSubscription();
+}
+
+function satrecFor(s) {
+  if (s.satrec) return s.satrec;
+  try { s.satrec = satellite.twoline2satrec(s.line1, s.line2); } catch (e) { s.satrec = null; }
+  return s.satrec;
 }
 
 async function refreshTLEs() {
   if (!satEngine.active) return;
   try {
-    var resp = await fetch(API + '/api/tles');
+    var resp = await fetch(tleEndpoint(satEngine.group));
     if (!resp.ok) return;
     var data = await resp.json();
     if ((data.satellites || []).length) {
       buildSatCatalog(data.satellites);
+      satEngine.source = data.source || satEngine.source;
+      updateCatalogStatus();
       addIntelItem('TLE catalog refreshed: ' + satEngine.sats.length + ' objects');
     }
   } catch (e) { /* keep current catalog */ }
+}
+
+async function switchCatalogGroup(group) {
+  satEngine.group = group || '';
+  var status = $('cat-status');
+  if (status) status.textContent = 'SOURCE: FETCHING...';
+  try {
+    var resp = await fetch(tleEndpoint(satEngine.group));
+    if (!resp.ok) throw new Error('catalog fetch failed');
+    var data = await resp.json();
+    if (!(data.satellites || []).length) throw new Error('empty catalog');
+    buildSatCatalog(data.satellites);
+    satEngine.source = data.source || 'catalog';
+    updateCatalogStatus();
+    addIntelItem('Catalog: ' + satEngine.sats.length + ' objects from ' + satEngine.source);
+  } catch (e) {
+    if (status) status.textContent = 'SOURCE: FETCH FAILED, CATALOG UNCHANGED';
+    addIntelItem('Catalog switch failed; keeping the current objects');
+  }
 }
 
 function satEngineFrame() {
@@ -1243,26 +1934,47 @@ function satEngineFrame() {
   var n = sats.length;
   if (!n) return;
 
-  var when = simNow();
-  var gmst = satellite.gstime(when);
-  var batch = Math.ceil(n / satEngine.batchDivisor);
-  for (var k = 0; k < batch; k++) {
-    updateSatPosition(sats[(satEngine.cursor + k) % n], when, gmst);
-  }
-  satEngine.cursor = (satEngine.cursor + batch) % n;
-
   var nowMs = performance.now();
+
+  if (satEngine.workerReady && !satEngine.workerFailed) {
+    var minGap = 1000 / satEngine.workerHz;
+    if (!satEngine.workerPending && nowMs - satEngine.workerLastPost >= minGap) {
+      satEngine.workerPending = true;
+      satEngine.workerLastPost = nowMs;
+      var buf = satEngine.workerBuffer;
+      satEngine.workerBuffer = null;
+      satEngine.worker.postMessage(
+        { type: 'positions', t: simNow().getTime(), buffer: buf },
+        buf ? [buf] : []
+      );
+    }
+  } else {
+    // Fallback: round-robin on the main thread, as before the worker existed.
+    var when = simNow();
+    var gmst = satellite.gstime(when);
+    var batch = Math.ceil(n / satEngine.batchDivisor);
+    for (var k = 0; k < batch; k++) {
+      updateSatPosition(sats[(satEngine.cursor + k) % n], when, gmst);
+    }
+    satEngine.cursor = (satEngine.cursor + batch) % n;
+  }
+
   if (nowMs - satEngine.lastLabelRebuild > 400) {
     satEngine.lastLabelRebuild = nowMs;
     rebuildSatLabels();
+    updateRosterReadouts();
   }
 }
 
 function updateSatPosition(s, when, gmst) {
+  if (s.serverTracked) return; // the server track feed owns this object
+  var satrec = satrecFor(s);
+  if (!satrec) { s.located = false; s.point.show = false; return; }
   var pv;
-  try { pv = satellite.propagate(s.satrec, when); } catch (e) { pv = null; }
-  if (!pv || !pv.position) { s.point.show = false; return; }
+  try { pv = satellite.propagate(satrec, when); } catch (e) { pv = null; }
+  if (!pv || !pv.position) { s.located = false; s.point.show = false; return; }
   var gd = satellite.eciToGeodetic(pv.position, gmst);
+  s.located = true;
   s.lastLat = satellite.degreesLat(gd.latitude);
   s.lastLon = satellite.degreesLong(gd.longitude);
   s.lastAlt = gd.height; // km
@@ -1272,8 +1984,21 @@ function updateSatPosition(s, when, gmst) {
     );
   }
   s.point.position = Cesium.Cartesian3.fromRadians(gd.longitude, gd.latitude, gd.height * 1000);
-  s.point.show = true;
+  s.point.show = !s.hidden;
   if (s.label) s.label.position = s.point.position;
+}
+
+// A module hides a set of satellites (a constellation filter, for one) by
+// setting s.hidden and calling this. Every propagation path honours the flag,
+// so a hidden dot stays hidden on the next tick, and labels follow the dots.
+// An object with no position stays off whatever its flag says: a record starts
+// at 0N 0E, and one that lost its SGP4 solution keeps the last place it had.
+function refreshSatVisibility() {
+  var sats = satEngine.sats;
+  for (var i = 0; i < sats.length; i++) {
+    if (sats[i].point) sats[i].point.show = !sats[i].hidden && sats[i].located === true;
+  }
+  satEngine.lastLabelRebuild = 0;
 }
 
 function rebuildSatLabels() {
@@ -1357,42 +2082,77 @@ function selectSatellite(noradId) {
 
   drawSelectedOrbit(s);
   satEngine.lastLabelRebuild = 0;
-  viewer.camera.flyToBoundingSphere(
-    new Cesium.BoundingSphere(s.point.position, Math.max((s.lastAlt || 500) * 1500, 2.0e6)),
-    { duration: 1.0 }
-  );
+  sendServerTrackSubscription();
+  updatePinButton();
+  // An attached camera mode is already framing the object, so a fly-to here
+  // would fight it for the same frame.
+  if (camState.mode === 'free' || camState.mode === 'tour') {
+    viewer.camera.flyToBoundingSphere(
+      new Cesium.BoundingSphere(s.point.position, Math.max((s.lastAlt || 500) * 1500, 2.0e6)),
+      { duration: 1.0 }
+    );
+  } else {
+    acquireCameraTarget();
+    camState.lastPos = null;
+  }
+  refreshSensorCoverage(true);
   addIntelItem('Tracking: ' + s.name);
+  document.dispatchEvent(new CustomEvent('sda:satellite-selected', {
+    detail: { noradId: noradId, name: s.name }
+  }));
 }
 
 function clearSatSelection() {
-  var prev = satEngine.selectedId != null ? satEngine.byNoradId[satEngine.selectedId] : null;
+  var prevId = satEngine.selectedId;
+  var prev = prevId != null ? satEngine.byNoradId[prevId] : null;
   if (prev && prev.point) {
     prev.point.pixelSize = detectionMode ? SAT_PT_SIZE_DETECT : SAT_PT_SIZE;
     prev.point.outlineColor = Cesium.Color.fromAlpha(prev.color, 0.6);
     prev.point.outlineWidth = 1;
   }
   satEngine.selectedId = null;
-  if (selectedOrbitEntity) {
-    viewer.entities.remove(selectedOrbitEntity);
-    selectedOrbitEntity = null;
+  removeSelectedTrack();
+  updatePinButton();
+  if (sensorState.covering && Object.keys(sensorState.covering).length) {
+    sensorState.covering = {};
+    sensorState.lastCoverageId = null;
+    if (layerState.sensors) drawSensorLayer();
+  }
+  if (prevId != null) {
+    document.dispatchEvent(new CustomEvent('sda:satellite-deselected', {
+      detail: { noradId: prevId }
+    }));
   }
 }
 
+// Orbit ring plus ground track for the selected object. The worker computes
+// both from one sampling pass; the main thread only does it when the worker is
+// unavailable.
 function drawSelectedOrbit(s) {
-  var periodMin = (2 * Math.PI) / s.satrec.no; // satrec.no is rad/min
+  if (satEngine.workerReady && !satEngine.workerFailed) {
+    satEngine.worker.postMessage({
+      type: 'track', id: s.noradId, t: simNow().getTime(), points: 180, revs: 1
+    });
+    return;
+  }
+  var satrec = satrecFor(s);
+  if (!satrec) return;
+  var periodMin = (2 * Math.PI) / satrec.no; // satrec.no is rad/min
   if (!isFinite(periodMin) || periodMin <= 0) return;
   periodMin = Math.min(periodMin, 1500);
   var nPts = 128;
   var stepMs = periodMin * 60000 / nPts;
   var start = simNow().getTime();
   var positions = [];
+  var groundPts = [];
   for (var i = 0; i <= nPts; i++) {
     var t = new Date(start + i * stepMs);
     var pv;
-    try { pv = satellite.propagate(s.satrec, t); } catch (e) { continue; }
+    try { pv = satellite.propagate(satrec, t); } catch (e) { continue; }
     if (!pv || !pv.position) continue;
     var gd = satellite.eciToGeodetic(pv.position, satellite.gstime(t));
     positions.push(Cesium.Cartesian3.fromRadians(gd.longitude, gd.latitude, gd.height * 1000));
+    groundPts.push(Cesium.Cartesian3.fromRadians(gd.longitude, gd.latitude, 0));
   }
   if (positions.length < 2) return;
   selectedOrbitEntity = viewer.entities.add({
@@ -1402,6 +2162,281 @@ function drawSelectedOrbit(s) {
       material: new Cesium.ColorMaterialProperty(Cesium.Color.fromAlpha(s.color, 0.45)),
     }
   });
+  selectedGroundTrackEntity = viewer.entities.add({
+    id: 'selected-ground-track',
+    polyline: {
+      positions: groundPts, width: 1.0,
+      material: new Cesium.PolylineDashMaterialProperty({
+        color: Cesium.Color.fromAlpha(s.color, 0.35), dashLength: 10,
+      }),
+    }
+  });
+}
+
+// ===== SERVER TRACK FEED (/ws/positions) =====
+// The server runs the same SGP4 the browser does. Consuming its stream for the
+// selected object and the contacts roster turns the socket into a live check on
+// the client propagation instead of an endpoint nobody reads. Everything else
+// keeps propagating in the worker, and if the socket drops the tracked objects
+// silently return to client propagation on the next frame.
+var serverTrack = {
+  socket: null,
+  enabled: !IS_STATIC,
+  state: 'off',      // off, connecting, live, retrying
+  attempts: 0,
+  timer: null,
+  lastMessage: 0,
+  lastCount: 0,
+  tracked: {},       // norad id -> true, ids currently driven by the server
+};
+
+function serverTrackUrl() {
+  var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return proto + '//' + window.location.host + '/ws/positions';
+}
+
+function serverTrackIds() {
+  var ids = [];
+  for (var i = 0; i < roster.length; i++) ids.push(roster[i]);
+  if (satEngine.selectedId != null && ids.indexOf(satEngine.selectedId) === -1) {
+    ids.push(satEngine.selectedId);
+  }
+  return ids;
+}
+
+function setServerTrackState(state, detail) {
+  serverTrack.state = state;
+  var el = $('server-track');
+  if (!el) return;
+  var text = { off: 'SRV: OFF', connecting: 'SRV: LINK...', live: 'SRV: TRACK',
+               retrying: 'SRV: RETRY', unavailable: 'SRV: N/A' }[state] || 'SRV: OFF';
+  if (state === 'live' && detail) text += ' ' + detail;
+  el.textContent = text;
+  el.style.color = state === 'live' ? '#00ff88'
+    : (state === 'retrying' ? '#ff8800' : 'var(--hud-dim)');
+}
+
+function connectServerTrack() {
+  if (IS_STATIC || !serverTrack.enabled) { setServerTrackState('off'); return; }
+  if (serverTrack.socket) return;
+  setServerTrackState('connecting');
+  var sock;
+  try {
+    sock = new WebSocket(serverTrackUrl());
+  } catch (e) {
+    scheduleServerTrackRetry();
+    return;
+  }
+  serverTrack.socket = sock;
+
+  sock.onopen = function () {
+    serverTrack.attempts = 0;
+    setServerTrackState('live');
+    sendServerTrackSubscription();
+  };
+  sock.onmessage = function (event) {
+    var payload;
+    try { payload = JSON.parse(event.data); } catch (e) { return; }
+    applyServerTrack(payload);
+  };
+  sock.onerror = function () { /* onclose does the retry bookkeeping */ };
+  sock.onclose = function () {
+    serverTrack.socket = null;
+    releaseServerTracked();
+    if (serverTrack.enabled) scheduleServerTrackRetry();
+    else setServerTrackState('off');
+  };
+}
+
+// Exponential backoff, capped, so a server restart does not turn into a
+// reconnect storm from every open tab.
+function scheduleServerTrackRetry() {
+  if (serverTrack.timer) return;
+  serverTrack.attempts = Math.min(serverTrack.attempts + 1, 6);
+  var delay = Math.min(30000, 1000 * Math.pow(2, serverTrack.attempts - 1));
+  setServerTrackState('retrying');
+  serverTrack.timer = setTimeout(function () {
+    serverTrack.timer = null;
+    if (serverTrack.enabled) connectServerTrack();
+  }, delay);
+}
+
+function sendServerTrackSubscription() {
+  var sock = serverTrack.socket;
+  if (!sock || sock.readyState !== 1) return;
+  var ids = serverTrackIds();
+  try {
+    sock.send(JSON.stringify({ norad_ids: ids, interval: 2.0 }));
+  } catch (e) { /* the close handler will retry */ }
+  if (ids.length === 0) releaseServerTracked();
+}
+
+function releaseServerTracked() {
+  for (var id in serverTrack.tracked) {
+    var s = satEngine.byNoradId[id];
+    if (s) s.serverTracked = false;
+  }
+  serverTrack.tracked = {};
+  serverTrack.lastCount = 0;
+  if (serverTrack.state === 'live') setServerTrackState('live');
+}
+
+function applyServerTrack(payload) {
+  var list = (payload && payload.satellites) || [];
+  var subscribed = payload && payload.subscribed;
+  // A full-catalog broadcast (no subscription echoed back) is not what the
+  // globe wants to drive its points with; only an explicit subscription does.
+  if (!subscribed || !subscribed.length) { releaseServerTracked(); return; }
+
+  var seen = {};
+  var applied = 0;
+  for (var i = 0; i < list.length; i++) {
+    var row = list[i];
+    var s = satEngine.byNoradId[row.norad_id];
+    if (!s || !s.point) continue;
+    s.serverTracked = true;
+    s.located = true;
+    s.lastLat = row.lat;
+    s.lastLon = row.lon;
+    s.lastAlt = row.alt_km;
+    if (row.velocity_km_s !== undefined) s.lastVel = row.velocity_km_s;
+    s.point.position = Cesium.Cartesian3.fromDegrees(row.lon, row.lat, row.alt_km * 1000);
+    s.point.show = layerState.satellites && !s.hidden;
+    if (s.label) s.label.position = s.point.position;
+    seen[row.norad_id] = true;
+    applied++;
+  }
+  for (var id in serverTrack.tracked) {
+    if (!seen[id]) {
+      var prev = satEngine.byNoradId[id];
+      if (prev) prev.serverTracked = false;
+    }
+  }
+  serverTrack.tracked = seen;
+  serverTrack.lastMessage = performance.now();
+  serverTrack.lastCount = applied;
+  setServerTrackState('live', '(' + applied + ')');
+}
+
+function toggleServerTrack() {
+  if (IS_STATIC) {
+    addIntelItem('Static demo: no server, so the server track feed stays off');
+    setServerTrackState('unavailable');
+    return;
+  }
+  serverTrack.enabled = !serverTrack.enabled;
+  if (serverTrack.enabled) {
+    serverTrack.attempts = 0;
+    connectServerTrack();
+    addIntelItem('Server track feed enabled');
+  } else {
+    if (serverTrack.timer) { clearTimeout(serverTrack.timer); serverTrack.timer = null; }
+    if (serverTrack.socket) { try { serverTrack.socket.close(); } catch (e) { /* closing */ } }
+    serverTrack.socket = null;
+    releaseServerTracked();
+    setServerTrackState('off');
+    addIntelItem('Server track feed disabled; client propagation only');
+  }
+}
+
+// ===== CONTACTS ROSTER =====
+// A short list of objects the operator is actually watching, in the spirit of
+// gods-eye-view's contact list: pin from the info panel or with R, fly to one
+// with a click, and the same ids drive the server track subscription and the
+// share link.
+var roster = [];
+var ROSTER_MAX = 24;
+
+function isPinned(noradId) { return roster.indexOf(noradId) !== -1; }
+
+function togglePin(noradId) {
+  if (noradId == null) return;
+  var at = roster.indexOf(noradId);
+  if (at === -1) {
+    if (roster.length >= ROSTER_MAX) {
+      addIntelItem('Contacts list is full (' + ROSTER_MAX + '); unpin one first');
+      return;
+    }
+    roster.push(noradId);
+    var s = satEngine.byNoradId[noradId];
+    addIntelItem('Pinned to contacts: ' + (s ? s.name : noradId));
+  } else {
+    roster.splice(at, 1);
+  }
+  renderRoster();
+  updatePinButton();
+  sendServerTrackSubscription();
+}
+
+function updatePinButton() {
+  var btn = $('btn-pin');
+  if (!btn) return;
+  var nid = satEngine.selectedId;
+  btn.style.display = nid == null ? 'none' : '';
+  btn.textContent = isPinned(nid) ? 'UNPIN FROM CONTACTS [R]' : 'PIN TO CONTACTS [R]';
+}
+
+function renderRoster() {
+  var list = $('roster-list');
+  var empty = $('roster-empty');
+  if (!list) return;
+  list.replaceChildren();
+  var live = [];
+  for (var i = 0; i < roster.length; i++) {
+    if (satEngine.byNoradId[roster[i]]) live.push(roster[i]);
+  }
+  roster = live;
+  if (empty) empty.style.display = roster.length ? 'none' : '';
+
+  for (var k = 0; k < roster.length; k++) {
+    var s = satEngine.byNoradId[roster[k]];
+    var row = document.createElement('div');
+    row.className = 'info-row';
+    row.style.cursor = 'pointer';
+    row.dataset.norad = String(s.noradId);
+
+    var name = document.createElement('span');
+    name.className = 'info-label';
+    name.style.color = s.color.toCssHexString ? s.color.toCssHexString() : 'var(--hud-color)';
+    name.textContent = s.name.slice(0, 18);
+    row.appendChild(name);
+
+    var readout = document.createElement('span');
+    readout.className = 'info-value';
+    readout.dataset.rosterReadout = String(s.noradId);
+    readout.textContent = (s.lastAlt || 0).toFixed(0) + ' km';
+    row.appendChild(readout);
+
+    var drop = document.createElement('span');
+    drop.textContent = ' x';
+    drop.style.cssText = 'margin-left:6px;color:#ff4040;cursor:pointer;';
+    drop.dataset.unpin = String(s.noradId);
+    row.appendChild(drop);
+
+    list.appendChild(row);
+  }
+}
+
+function updateRosterReadouts() {
+  var list = $('roster-list');
+  if (!list || !roster.length) return;
+  var cells = list.querySelectorAll('[data-roster-readout]');
+  for (var i = 0; i < cells.length; i++) {
+    var s = satEngine.byNoradId[parseInt(cells[i].dataset.rosterReadout, 10)];
+    if (s) cells[i].textContent = (s.lastAlt || 0).toFixed(0) + ' km';
+  }
+}
+
+function flyToContact(noradId) {
+  var s = satEngine.byNoradId[noradId];
+  if (!s || !s.point) return;
+  selectSatellite(noradId);
+}
+
+function nextContact() {
+  if (!roster.length) { addIntelItem('No contacts pinned'); return; }
+  var at = roster.indexOf(satEngine.selectedId);
+  flyToContact(roster[(at + 1) % roster.length]);
 }
 
 // ===== SATELLITE LAYER (server-position fallback when the engine is off) =====
@@ -1981,6 +3016,12 @@ async function fetchConjunctionGlobeData(hours, threshold) {
         flat.bplane_y_km = e.bplane.miss_y_km;
         flat.sigma_combined_km = e.bplane.sigma_combined_km || flat.sigma_combined_km || 0.07;
       }
+      if (e.covariance) {
+        flat.covariance = e.covariance;
+        if (!flat.sigma_combined_km && e.covariance.combined_sigma_km) {
+          flat.sigma_combined_km = e.covariance.combined_sigma_km;
+        }
+      }
       return flat;
     });
     renderConjunctionsOnGlobe(normalized);
@@ -2045,6 +3086,20 @@ function selectEntity(entity) {
     info.appendChild(makeInfoRow('CAMERA ID', props.camera_id ? props.camera_id.getValue() : ''));
     info.appendChild(makeInfoRow('CITY', props.city ? props.city.getValue() : ''));
     showCCTVFeed(entity);
+  } else if (props && props.detail_rows) {
+    // Feed points from static/js/layers.js bring their own [label, value] rows.
+    var detailRows = props.detail_rows.getValue();
+    for (var di = 0; di < detailRows.length; di++) {
+      info.appendChild(makeInfoRow(detailRows[di][0], detailRows[di][1]));
+    }
+  }
+
+  // An attached camera mode drives the pose itself, so Cesium's own entity
+  // tracking is turned back off and the new object becomes the camera target.
+  if (camState.mode === 'chase' || camState.mode === 'cockpit' || camState.mode === 'orbit') {
+    viewer.trackedEntity = undefined;
+    acquireCameraTarget();
+    camState.lastPos = null;
   }
 
   addIntelItem('Tracking: ' + (entity.name || 'Unknown entity'));
@@ -2056,26 +3111,47 @@ function deselectEntity() {
   satEngine.lastLabelRebuild = 0;
   $('info-panel').classList.add('hidden');
   viewer.trackedEntity = undefined;
+  // Nothing left to attach to.
+  if (camState.mode === 'chase' || camState.mode === 'cockpit' || camState.mode === 'orbit') {
+    setCameraMode('free');
+  }
 }
 
 // ===== VIEW MODE SWITCHING =====
+// The style registry in static/js/styles.js is the source of truth for which
+// modes exist. When the GLSL stages are live the class on <body> only carries
+// the HUD palette; when they are not, it also drives the CSS emulation.
+var FX_PRESETS = {
+  normal: { bloom: 0,  sensitivity: 50, sharpen: 0,  pixelate: 0 },
+  crt:    { bloom: 20, sensitivity: 50, sharpen: 30, pixelate: 0 },
+  nvg:    { bloom: 40, sensitivity: 80, sharpen: 0,  pixelate: 0 },
+  flir:   { bloom: 30, sensitivity: 60, sharpen: 20, pixelate: 0 },
+  noir:   { bloom: 0,  sensitivity: 45, sharpen: 25, pixelate: 0 },
+  snow:   { bloom: 10, sensitivity: 55, sharpen: 0,  pixelate: 0 }
+};
+
 function setViewMode(mode) {
-  document.body.className = 'mode-' + mode + (detectionMode ? ' detection-mode' : '');
+  if (window.WorldViewStyles && !WorldViewStyles.has(mode)) mode = 'normal';
+  if (!FX_PRESETS[mode]) mode = 'normal';
+  currentViewMode = mode;
+  document.body.className = 'mode-' + mode
+    + (detectionMode ? ' detection-mode' : '')
+    + (glStylesLive ? ' gl-styles' : '');
   document.querySelectorAll('.mode-btn[data-mode]').forEach(function(b) {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
+  if (styleFx) styleFx.setStyle(mode);
   addIntelItem('View mode: ' + mode.toUpperCase());
+  applyPostProcessing(FX_PRESETS[mode]);
+}
 
-  // Apply mode-specific post-processing
-  if (mode === 'nvg') {
-    applyPostProcessing({ bloom: 40, sensitivity: 80, sharpen: 0, pixelate: 0 });
-  } else if (mode === 'crt') {
-    applyPostProcessing({ bloom: 20, sensitivity: 50, sharpen: 30, pixelate: 0 });
-  } else if (mode === 'flir') {
-    applyPostProcessing({ bloom: 30, sensitivity: 60, sharpen: 20, pixelate: 0 });
-  } else {
-    applyPostProcessing({ bloom: 0, sensitivity: 50, sharpen: 0, pixelate: 0 });
-  }
+// FLIR white-hot / black-hot. Only the thermal stage carries a polarity, so on
+// any other style this just records the preference for the next FLIR switch.
+function setThermalPolarity(blackHot) {
+  var box = $('fx-hotpolarity');
+  if (box) box.checked = !!blackHot;
+  if (styleFx) styleFx.setUniform('flir', 'polarity', blackHot ? 1.0 : 0.0);
+  addIntelItem('Thermal polarity: ' + (blackHot ? 'BLACK-HOT' : 'WHITE-HOT'));
 }
 
 // ===== DETECTION MODE =====
@@ -2156,27 +3232,32 @@ function updatePostProcessing() {
   var canvas = document.querySelector('#cesiumContainer canvas');
   if (!canvas) return;
 
-  var existingFilter = '';
-  var mode = document.body.className.match(/mode-(\w+)/);
-  if (mode) {
-    switch (mode[1]) {
-      case 'crt': existingFilter = 'sepia(100%) hue-rotate(70deg) saturate(400%) brightness(0.7) contrast(1.1)'; break;
-      case 'nvg': existingFilter = 'sepia(100%) hue-rotate(70deg) saturate(500%) brightness(1.2) contrast(1.4)'; break;
-      case 'flir': existingFilter = 'saturate(150%) hue-rotate(190deg) brightness(0.85) contrast(1.4)'; break;
-      default: existingFilter = ''; break;
-    }
+  if (glStylesLive && styleFx) {
+    // The GLSL stages own the look. The bloom slider drives Cesium's built-in
+    // bloom stage (the detection glow) and the sensitivity slider drives the
+    // active style's intensity, so nothing is written to canvas.style.filter
+    // and the two systems never stack.
+    styleFx.setGlow(bloom > 0, bloom / 100);
+    var glowBox = $('fx-glow');
+    if (glowBox) glowBox.checked = bloom > 0;
+    styleFx.setUniform(currentViewMode, 'intensity', Math.min(1.6, sensitivity / 52));
+    canvas.style.filter = '';
+  } else {
+    var existingFilter = window.WorldViewStyles
+      ? WorldViewStyles.cssFilterFor(currentViewMode)
+      : '';
+
+    var brightnessMod = 0.5 + (sensitivity / 100) * 1.0;
+    var sharpVal = sharpen > 0 ? ' contrast(' + (1 + sharpen/200) + ')' : '';
+    var bloomCSS = bloom > 0
+      ? ' drop-shadow(0 0 ' + (bloom/10) + 'px rgba(255,255,255,' + (bloom/200) + '))'
+      : '';
+
+    canvas.style.filter = existingFilter
+      + ' brightness(' + brightnessMod.toFixed(2) + ')'
+      + sharpVal
+      + bloomCSS;
   }
-
-  var brightnessMod = 0.5 + (sensitivity / 100) * 1.0;
-  var sharpVal = sharpen > 0 ? ' contrast(' + (1 + sharpen/200) + ')' : '';
-  var bloomCSS = bloom > 0
-    ? ' drop-shadow(0 0 ' + (bloom/10) + 'px rgba(255,255,255,' + (bloom/200) + '))'
-    : '';
-
-  canvas.style.filter = existingFilter
-    + ' brightness(' + brightnessMod.toFixed(2) + ')'
-    + sharpVal
-    + bloomCSS;
 
   if (pixelate > 10) {
     var scale = 1 - (pixelate / 150);
@@ -2205,6 +3286,390 @@ function flyToPreset(key) {
     var cctvMap = { austin: 'austin', london: 'london', dc: 'austin' };
     if (cctvMap[key]) loadCCTV(cctvMap[key]);
   }
+}
+
+// ============================================================
+// C2: CAMERA MODES, TRAILS, LABEL DECLUTTER, SENSOR FOV CONES
+// Camera modes and the trail renderer follow the gods-eye-view design
+// (https://github.com/bilawalsidhu/gods-eye-view, MIT).
+// ============================================================
+
+// The tour walks every preset except the global view, which is where the
+// camera already starts.
+var TOUR_KEYS = Object.keys(PRESETS).filter(function (k) { return k !== 'global'; });
+
+function setCount(id, value) {
+  var el = $(id);
+  if (el) el.textContent = String(value);
+}
+
+function setCamStatus(text) {
+  var el = $('cam-status');
+  if (el) el.textContent = text;
+}
+
+// ----- camera modes -----
+
+// The object the attached camera modes follow: the selected satellite first,
+// then whatever entity the info panel is showing.
+function acquireCameraTarget() {
+  if (satEngine.active && satEngine.selectedId != null &&
+      satEngine.byNoradId[satEngine.selectedId]) {
+    camState.targetKind = 'satellite';
+    camState.targetId = satEngine.selectedId;
+    return true;
+  }
+  if (selectedEntity && selectedEntity.position) {
+    camState.targetKind = 'entity';
+    camState.targetId = selectedEntity.id;
+    return true;
+  }
+  camState.targetKind = null;
+  camState.targetId = null;
+  return false;
+}
+
+function cameraTargetPosition() {
+  if (camState.targetKind === 'satellite') {
+    var s = satEngine.byNoradId[camState.targetId];
+    return (s && s.point && s.point.show) ? s.point.position : null;
+  }
+  if (camState.targetKind === 'entity') {
+    if (!selectedEntity || selectedEntity.id !== camState.targetId) return null;
+    if (!selectedEntity.position) return null;
+    return selectedEntity.position.getValue(viewer.clock.currentTime) || null;
+  }
+  return null;
+}
+
+function setCameraMode(mode) {
+  if (!viewer) return;
+  var attached = (mode === 'chase' || mode === 'cockpit' || mode === 'orbit');
+  if (attached && !acquireCameraTarget()) {
+    addIntelItem('Camera: select a satellite or aircraft first');
+    mode = 'free';
+  }
+
+  camState.mode = mode;
+  camState.lastPos = null;
+  camState.forward = null;
+  camState.orbitAngle = 0;
+  camState.tourNext = 0;
+
+  var controller = viewer.scene.screenSpaceCameraController;
+  if (mode === 'free') {
+    controller.enableInputs = true;
+    setCamStatus('CAM: FREE');
+  } else {
+    // Cesium's own entity tracking and a manual pose fight over the camera,
+    // so both are shut off while an attached mode or the tour is running.
+    viewer.trackedEntity = undefined;
+    viewer.camera.cancelFlight();
+    controller.enableInputs = (mode === 'tour');
+    setCamStatus('CAM: ' + mode.toUpperCase());
+  }
+
+  document.querySelectorAll('.mode-btn[data-cam]').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.cam === camState.mode);
+  });
+  addIntelItem('Camera mode: ' + camState.mode.toUpperCase());
+}
+
+function cameraFrame() {
+  if (!viewer || !window.WorldViewTactical || camState.mode === 'free') return;
+  if (camState.mode === 'tour') { tourFrame(); return; }
+
+  var pos = cameraTargetPosition();
+  if (!pos) {
+    addIntelItem('Camera: target lost, returning to FREE');
+    setCameraMode('free');
+    return;
+  }
+
+  var fwd = WorldViewTactical.forwardFrom(Cesium, camState.lastPos, pos);
+  if (fwd) camState.forward = fwd;
+  camState.lastPos = Cesium.Cartesian3.clone(pos, new Cesium.Cartesian3());
+  if (!camState.forward) {
+    // The clock is paused or the object has not moved yet. East in the local
+    // horizontal frame is an arbitrary but stable heading to hold.
+    var frame = Cesium.Transforms.eastNorthUpToFixedFrame(pos);
+    camState.forward = Cesium.Cartesian3.normalize(
+      Cesium.Cartesian3.fromCartesian4(Cesium.Matrix4.getColumn(frame, 0, new Cesium.Cartesian4())),
+      new Cesium.Cartesian3());
+  }
+
+  var carto = Cesium.Cartographic.fromCartesian(pos);
+  var altM = carto ? carto.height : 0;
+  // Orbital objects need a stand-off of hundreds of km to read as a chase;
+  // aircraft need a few km. Both are clamped so the pose never clips terrain.
+  var rangeM = altM > 1.0e5 ? Math.max(1.5e5, altM * 0.30) : Math.max(2500, altM * 0.8 + 1500);
+
+  var pose;
+  if (camState.mode === 'chase') {
+    pose = WorldViewTactical.chasePose(Cesium, pos, camState.forward, rangeM, 0.25);
+  } else if (camState.mode === 'cockpit') {
+    pose = WorldViewTactical.cockpitPose(Cesium, pos, camState.forward, altM > 1.0e5 ? 0 : 60);
+  } else {
+    camState.orbitAngle += Cesium.Math.toRadians(camState.orbitRateDegS) / 60.0;
+    pose = WorldViewTactical.orbitPose(
+      Cesium, pos, camState.orbitAngle, rangeM * 1.4, Cesium.Math.toRadians(22));
+  }
+
+  viewer.camera.setView({
+    destination: pose.destination,
+    orientation: { direction: pose.direction, up: pose.up }
+  });
+}
+
+function tourFrame() {
+  var now = performance.now();
+  if (now < camState.tourNext) return;
+  camState.tourNext = now + camState.tourDwellS * 1000;
+  var key = TOUR_KEYS[camState.tourIndex % TOUR_KEYS.length];
+  camState.tourIndex = (camState.tourIndex + 1) % TOUR_KEYS.length;
+  flyToPreset(key);
+  setCamStatus('CAM: TOUR ' + (camState.tourIndex || TOUR_KEYS.length) + '/' + TOUR_KEYS.length);
+}
+
+// ----- trails -----
+
+// Trails are drawn only for objects the operator is actually tracking: the
+// selected satellite, every pinned contact, and the selected aircraft or
+// military track. Positions come from the worker or the live feed, so nothing
+// is propagated twice.
+function trailTargets() {
+  var out = [];
+  var seen = {};
+  if (satEngine.active) {
+    var ids = [];
+    if (satEngine.selectedId != null) ids.push(satEngine.selectedId);
+    for (var i = 0; i < roster.length; i++) ids.push(roster[i]);
+    for (i = 0; i < ids.length; i++) {
+      if (seen[ids[i]]) continue;
+      seen[ids[i]] = true;
+      var s = satEngine.byNoradId[ids[i]];
+      if (!s || !s.point || !s.point.show) continue;
+      out.push({ key: 'sat:' + s.noradId, position: s.point.position,
+                 color: s.color || Cesium.Color.CYAN });
+    }
+  }
+  if (selectedEntity && selectedEntity.position && viewer) {
+    var p = selectedEntity.position.getValue(viewer.clock.currentTime);
+    if (p) {
+      out.push({ key: 'ent:' + selectedEntity.id, position: p,
+                 color: Cesium.Color.fromCssColorString('#ff9d3a') });
+    }
+  }
+  return out;
+}
+
+function setTrailLength(points) {
+  if (!isFinite(points)) return;
+  trailLength = Math.max(10, Math.min(240, Math.round(points / 10) * 10));
+  if (trailStore) trailStore.setMaxPoints(trailLength);
+  var slider = $('trail-length');
+  if (slider) slider.value = trailLength;
+  var val = $('trail-length-val');
+  if (val) val.textContent = String(trailLength);
+}
+
+function tacticalFrame(nowMs) {
+  if (!viewer) return;
+
+  if (trailStore && layerState.trails && nowMs - lastTrailSync > 250) {
+    lastTrailSync = nowMs;
+    var targets = trailTargets();
+    var keep = {};
+    for (var i = 0; i < targets.length; i++) {
+      keep[targets[i].key] = true;
+      trailStore.push(targets[i].key, targets[i].position, targets[i].color);
+    }
+    trailStore.prune(keep);
+    setCount('count-trail', trailStore.sync());
+  }
+
+  if (labelArbiter && layerState.declutter && nowMs - lastDeclutter > 100) {
+    lastDeclutter = nowMs;
+    runLabelDeclutter();
+  }
+}
+
+// ----- label declutter -----
+
+function runLabelDeclutter() {
+  if (!satEngine.labels) return;
+  var entries = [];
+  for (var i = 0; i < satEngine.labels.length; i++) {
+    var lab = satEngine.labels.get(i);
+    var nid = (lab.id && lab.id.noradId != null) ? lab.id.noradId : null;
+    var priority = 100;
+    if (nid != null && nid === satEngine.selectedId) priority = 0;
+    else if (nid != null && nid === satEngine.hoveredId) priority = 1;
+    else if (nid != null && isPinned(nid)) priority = 2;
+    entries.push({ position: lab.position, priority: priority, label: lab });
+  }
+  setCount('count-declutter', labelArbiter.run(viewer.scene, entries));
+}
+
+function showAllSatLabels() {
+  if (!satEngine.labels) return;
+  for (var i = 0; i < satEngine.labels.length; i++) satEngine.labels.get(i).show = true;
+  setCount('count-declutter', 0);
+}
+
+// ----- sensor field-of-view cones -----
+
+// GET /sensors is served by the passes router. If it is missing (a static
+// build, or a deployment without that router) the layer stays empty rather
+// than inventing sites.
+function loadSensors() {
+  if (sensorState.loaded || sensorState.loading) return Promise.resolve();
+  sensorState.loading = true;
+  return fetch(API + '/sensors')
+    .then(function (r) { return r.ok ? r.json() : { sensors: [] }; })
+    .catch(function () { return { sensors: [] }; })
+    .then(function (data) {
+      sensorState.loading = false;
+      sensorState.loaded = true;
+      var list = (data && data.sensors) || [];
+      sensorState.sensors = list.filter(function (s) {
+        return s && isFinite(s.latitude_deg) && isFinite(s.longitude_deg);
+      });
+      setCount('count-sen', sensorState.sensors.length);
+      if (!sensorState.sensors.length) addIntelItem('Sensor catalog unavailable');
+      else addIntelItem('Sensor catalog: ' + sensorState.sensors.length + ' sites');
+      drawSensorLayer();
+    });
+}
+
+var SENSOR_TYPE_COLORS = {
+  radar: '#4ea3ff',
+  optical: '#ffd24e',
+  telescope: '#ffd24e',
+  laser: '#ff6bd6'
+};
+
+function sensorColor(sensor) {
+  var key = String(sensor.sensor_type || '').toLowerCase();
+  return Cesium.Color.fromCssColorString(SENSOR_TYPE_COLORS[key] || '#54e0c0');
+}
+
+function clearSensorLayer() {
+  for (var i = 0; i < sensorState.entities.length; i++) {
+    viewer.entities.remove(sensorState.entities[i]);
+  }
+  sensorState.entities = [];
+}
+
+// The footprint is the field of regard projected onto one reference altitude
+// shell (default 550 km). Drawing the full slant-range footprint would cover a
+// third of the globe for the long-range radars and tell the operator nothing.
+function drawSensorLayer() {
+  if (!viewer || !window.WorldViewTactical) return;
+  clearSensorLayer();
+  if (!layerState.sensors) return;
+
+  for (var i = 0; i < sensorState.sensors.length; i++) {
+    var sensor = sensorState.sensors[i];
+    var color = sensorColor(sensor);
+    var hot = !!sensorState.covering[sensor.name];
+
+    var site = viewer.entities.add({
+      name: sensor.name,
+      position: Cesium.Cartesian3.fromDegrees(
+        sensor.longitude_deg, sensor.latitude_deg, (sensor.altitude_km || 0) * 1000),
+      point: {
+        pixelSize: hot ? 9 : 6,
+        color: color,
+        outlineColor: hot ? Cesium.Color.WHITE : Cesium.Color.BLACK.withAlpha(0.7),
+        outlineWidth: hot ? 2 : 1
+      },
+      label: {
+        text: sensor.name,
+        font: '9px JetBrains Mono',
+        fillColor: color,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(8, -6),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2.5e7)
+      },
+      properties: { type: 'sensor', sensor_name: sensor.name }
+    });
+    sensorState.entities.push(site);
+
+    var fp = WorldViewTactical.sensorFootprint(sensor, sensorState.shellAltKm, 72);
+    if (!fp) continue;
+
+    var ring = fp.wedge
+      ? [sensor.longitude_deg, sensor.latitude_deg].concat(fp.rim)
+      : fp.rim;
+    sensorState.entities.push(viewer.entities.add({
+      name: sensor.name + ' field of regard',
+      polygon: {
+        hierarchy: Cesium.Cartesian3.fromDegreesArray(ring),
+        material: color.withAlpha(hot ? 0.22 : 0.07),
+        outline: true,
+        outlineColor: color.withAlpha(hot ? 0.9 : 0.4),
+        height: 0
+      },
+      properties: { type: 'sensor-fov', sensor_name: sensor.name }
+    }));
+
+    var spokes = WorldViewTactical.footprintSpokes(sensor, fp, fp.wedge ? 2 : 4);
+    for (var k = 0; k < spokes.length; k++) {
+      sensorState.entities.push(viewer.entities.add({
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArray(spokes[k]),
+          width: 1,
+          material: color.withAlpha(hot ? 0.7 : 0.25)
+        },
+        properties: { type: 'sensor-fov', sensor_name: sensor.name }
+      }));
+    }
+  }
+  viewer.scene.requestRender();
+}
+
+// POST /sensors/coverage answers whether the selected object is inside each
+// site's field of regard right now. Any failure leaves the highlight off.
+function refreshSensorCoverage(force) {
+  if (!layerState.sensors || !sensorState.sensors.length) return;
+  var nid = satEngine.selectedId;
+  var now = performance.now();
+  if (nid == null) {
+    if (Object.keys(sensorState.covering).length) {
+      sensorState.covering = {};
+      sensorState.lastCoverageId = null;
+      drawSensorLayer();
+    }
+    return;
+  }
+  if (!force && nid === sensorState.lastCoverageId && now - sensorState.lastCoverageAt < 15000) return;
+  sensorState.lastCoverageId = nid;
+  sensorState.lastCoverageAt = now;
+
+  fetch(API + '/sensors/coverage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ norad_id: nid, sensor_names: [] })
+  })
+    .then(function (r) { return r.ok ? r.json() : { coverage: [] }; })
+    .catch(function () { return { coverage: [] }; })
+    .then(function (data) {
+      var covering = {};
+      var list = (data && data.coverage) || [];
+      var count = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].in_field_of_regard) {
+          covering[list[i].sensor_name] = true;
+          count++;
+        }
+      }
+      sensorState.covering = covering;
+      drawSensorLayer();
+      if (count) addIntelItem('Object ' + nid + ' inside ' + count + ' sensor cone(s)');
+    });
 }
 
 // ===== LOCATION SEARCH =====
@@ -2306,6 +3771,11 @@ function toggleLayer(layer, enabled) {
     for (id in conjEntities) { conjEntities[id].show = enabled; }
     if (enabled && conjEvents.length > 0) renderConjunctionsOnGlobe(conjEvents);
   }
+  if (layer === 'covariance') {
+    if (conjEvents.length > 0) renderConjunctionsOnGlobe(conjEvents);
+    else $('count-cov').textContent = '0';
+    if (enabled) addIntelItem('Covariance shells enabled (TLE-age estimate)');
+  }
   if (layer === 'traffic') {
     if (enabled) { loadTraffic(); addIntelItem('Traffic simulation enabled'); }
     else { clearTraffic(); }
@@ -2315,6 +3785,25 @@ function toggleLayer(layer, enabled) {
     for (id in cctvEntities) { cctvEntities[id].show = enabled; }
     if (enabled) { loadCCTV(); addIntelItem('CCTV layer enabled'); }
   }
+  if (layer === 'sensors') {
+    if (enabled) {
+      loadSensors().then(function () { drawSensorLayer(); refreshSensorCoverage(true); });
+    } else {
+      sensorState.covering = {};
+      clearSensorLayer();
+    }
+  }
+  if (layer === 'trails') {
+    if (trailStore) {
+      trailStore.setShow(enabled);
+      if (!enabled) { trailStore.clear(); setCount('count-trail', 0); }
+    }
+  }
+  if (layer === 'declutter') {
+    if (!enabled) showAllSatLabels();
+  }
+  var box = $('layer-' + layer);
+  if (box && box.checked !== enabled) box.checked = enabled;
   updateLayerStatus();
   if (viewer) viewer.scene.requestRender();
 }
@@ -2327,8 +3816,12 @@ function updateLayerStatus() {
   if (layerState.military) active.push('MIL');
   if (layerState.quakes) active.push('SEI');
   if (layerState.conjunctions) active.push('CONJ');
+  if (layerState.covariance) active.push('COV');
   if (layerState.traffic) active.push('TRF');
   if (layerState.cctv) active.push('CAM');
+  if (layerState.sensors) active.push('FOV');
+  if (layerState.trails) active.push('TRL');
+  if (layerState.declutter) active.push('DCL');
   $('layer-status').textContent = 'LAYERS: ' + active.join(' ');
 }
 
@@ -2361,6 +3854,174 @@ function updateFPS() {
   }
 }
 
+// ===== SHARE LINKS =====
+// The whole view lives in the URL hash: camera pose, active layers, visual
+// style, detection level, selection, contacts, catalog group and clock. Open
+// the link in another browser and you get the same picture.
+var SHARE_VERSION = '1';
+var SHARE_LAYER_KEYS = ['satellites', 'orbits', 'flights', 'military', 'quakes',
+                        'conjunctions', 'covariance', 'traffic', 'cctv',
+                        'sensors', 'trails', 'declutter'];
+var pendingShare = null;
+var copyLinkTimer = null;
+
+function encodeShareState() {
+  var parts = ['v=' + SHARE_VERSION];
+  if (viewer) {
+    var carto = viewer.camera.positionCartographic;
+    if (carto) {
+      parts.push('c=' + [
+        Cesium.Math.toDegrees(carto.longitude).toFixed(5),
+        Cesium.Math.toDegrees(carto.latitude).toFixed(5),
+        Math.round(carto.height),
+        Cesium.Math.toDegrees(viewer.camera.heading).toFixed(2),
+        Cesium.Math.toDegrees(viewer.camera.pitch).toFixed(2),
+        Cesium.Math.toDegrees(viewer.camera.roll).toFixed(2)
+      ].join(','));
+    }
+  }
+  var on = [];
+  for (var i = 0; i < SHARE_LAYER_KEYS.length; i++) {
+    if (layerState[SHARE_LAYER_KEYS[i]]) on.push(SHARE_LAYER_KEYS[i]);
+  }
+  parts.push('l=' + on.join(','));
+  parts.push('m=' + currentViewMode);
+  parts.push('d=' + detectionLevel);
+  if (satEngine.selectedId != null) parts.push('sel=' + satEngine.selectedId);
+  if (roster.length) parts.push('r=' + roster.join(','));
+  if (satEngine.group) parts.push('g=' + encodeURIComponent(satEngine.group));
+  if (camState.mode !== 'free') parts.push('cam=' + camState.mode);
+  if (layerState.trails) parts.push('tl=' + trailLength);
+  if (currentBasemap !== DEFAULT_BASEMAP) parts.push('bm=' + currentBasemap);
+  parts.push('t=' + (timeState.live ? 'live' : timeState.epoch.toISOString()));
+  if (viewer && viewer.clock && viewer.clock.multiplier !== 1) {
+    parts.push('x=' + viewer.clock.multiplier);
+  }
+  return parts.join('&');
+}
+
+function shareUrl() {
+  return location.origin + location.pathname + location.search + '#' + encodeShareState();
+}
+
+function parseShareHash(hash) {
+  var out = {};
+  var raw = (hash || '').replace(/^#/, '');
+  if (!raw) return out;
+  var pairs = raw.split('&');
+  for (var i = 0; i < pairs.length; i++) {
+    var eq = pairs[i].indexOf('=');
+    if (eq <= 0) continue;
+    try {
+      out[pairs[i].slice(0, eq)] = decodeURIComponent(pairs[i].slice(eq + 1));
+    } catch (e) { /* malformed escape: drop the field, keep the rest */ }
+  }
+  return out;
+}
+
+function applyShareState() {
+  var q = parseShareHash(location.hash);
+  if (!q.v) return false;
+  pendingShare = q;
+
+  if (q.c) {
+    var c = q.c.split(',').map(Number);
+    if (c.length >= 3 && isFinite(c[0]) && isFinite(c[1]) && isFinite(c[2])) {
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(c[0], c[1], c[2]),
+        orientation: {
+          heading: Cesium.Math.toRadians(isFinite(c[3]) ? c[3] : 0),
+          pitch: Cesium.Math.toRadians(isFinite(c[4]) ? c[4] : -45),
+          roll: Cesium.Math.toRadians(isFinite(c[5]) ? c[5] : 0)
+        }
+      });
+    }
+  }
+  if (q.m) setViewMode(q.m);
+  if (q.bm) setBasemap(q.bm, true);
+  if (q.l !== undefined) {
+    var wanted = q.l ? q.l.split(',') : [];
+    for (var i = 0; i < SHARE_LAYER_KEYS.length; i++) {
+      var key = SHARE_LAYER_KEYS[i];
+      var want = wanted.indexOf(key) !== -1;
+      var box = $('layer-' + key);
+      if (box) box.checked = want;
+      if (layerState[key] !== want) toggleLayer(key, want);
+    }
+  }
+  if (q.d && q.d !== 'off' && q.d !== detectionLevel) toggleDetection(q.d);
+  if (q.g !== undefined && q.g !== satEngine.group) {
+    var groupSel = $('cat-group');
+    if (groupSel) groupSel.value = q.g;
+    switchCatalogGroup(q.g);
+  }
+  if (q.t && q.t !== 'live') {
+    var when = new Date(q.t);
+    if (!isNaN(when.getTime())) {
+      timeState.live = false;
+      setClockDate(when);
+      timeState.windowStart = new Date(when.getTime() - 12 * 3600000);
+      updateTimeDisplay();
+    }
+  }
+  if (q.x) setClockSpeed(q.x);
+  if (q.tl) setTrailLength(parseInt(q.tl, 10));
+  // The attached camera modes need a selection, which only exists after the
+  // catalog loads, so the tour is the only one restored here directly.
+  if (q.cam === 'tour') setCameraMode('tour');
+  addIntelItem('View restored from share link');
+  if (satEngine.sats && satEngine.sats.length) applyPendingShareSelection();
+  return true;
+}
+
+// Selection and contacts can only be restored once the catalog exists, so
+// buildSatCatalog() calls this after it finishes.
+function applyPendingShareSelection() {
+  if (!pendingShare) return;
+  var q = pendingShare;
+  pendingShare = null;
+  if (q.r) {
+    var ids = q.r.split(',');
+    for (var i = 0; i < ids.length; i++) {
+      var nid = parseInt(ids[i], 10);
+      if (isFinite(nid) && satEngine.byNoradId[nid] && !isPinned(nid) && roster.length < ROSTER_MAX) {
+        roster.push(nid);
+      }
+    }
+    renderRoster();
+  }
+  var selId = parseInt(q.sel, 10);
+  if (isFinite(selId) && satEngine.byNoradId[selId]) selectSatellite(selId);
+  if (q.cam && q.cam !== 'free' && q.cam !== 'tour') setCameraMode(q.cam);
+  updatePinButton();
+  sendServerTrackSubscription();
+}
+
+function setCopyLinkStatus(text) {
+  var el = $('copy-link-status');
+  if (!el) return;
+  el.textContent = text;
+  clearTimeout(copyLinkTimer);
+  copyLinkTimer = setTimeout(function() { el.textContent = ''; }, 4000);
+}
+
+function copyShareLink() {
+  var url = shareUrl();
+  // Put it in the address bar first, so the link is recoverable by hand even
+  // when the clipboard write is blocked (insecure origin, denied permission).
+  try { history.replaceState(null, '', '#' + encodeShareState()); } catch (e) { /* ignore */ }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function() {
+      setCopyLinkStatus('LINK COPIED TO CLIPBOARD');
+      addIntelItem('Share link copied');
+    }, function() {
+      setCopyLinkStatus('COPY BLOCKED, LINK IS IN THE ADDRESS BAR');
+    });
+  } else {
+    setCopyLinkStatus('NO CLIPBOARD API, LINK IS IN THE ADDRESS BAR');
+  }
+}
+
 // ===== EVENT LISTENERS =====
 function setupEventListeners() {
   document.querySelectorAll('.mode-btn[data-mode]').forEach(function(btn) {
@@ -2370,13 +4031,18 @@ function setupEventListeners() {
     btn.addEventListener('click', function() { flyToPreset(btn.dataset.preset); });
   });
 
+  document.querySelectorAll('.mode-btn[data-basemap]').forEach(function(btn) {
+    btn.addEventListener('click', function() { setBasemap(btn.dataset.basemap); });
+  });
+
   $('btn-detect-sparse').addEventListener('click', function() { toggleDetection('sparse'); });
   $('btn-detect-full').addEventListener('click', function() { toggleDetection('full'); });
 
   var layerMap = {
     'layer-satellites': 'satellites', 'layer-orbits': 'orbits', 'layer-flights': 'flights',
     'layer-military': 'military', 'layer-quakes': 'quakes', 'layer-conjunctions': 'conjunctions',
-    'layer-traffic': 'traffic', 'layer-cctv': 'cctv',
+    'layer-covariance': 'covariance', 'layer-traffic': 'traffic', 'layer-cctv': 'cctv',
+    'layer-sensors': 'sensors', 'layer-trails': 'trails', 'layer-declutter': 'declutter',
   };
   for (var elId in layerMap) {
     (function(id, layer) {
@@ -2386,6 +4052,26 @@ function setupEventListeners() {
 
   ['fx-bloom', 'fx-sharpen', 'fx-sensitivity', 'fx-pixelate'].forEach(function(id) {
     $(id).addEventListener('input', updatePostProcessing);
+  });
+
+  // C2: style polarity, detection glow, camera modes, trail length
+  $('fx-hotpolarity').addEventListener('change', function() {
+    setThermalPolarity(this.checked);
+  });
+  $('fx-glow').addEventListener('change', function() {
+    var on = this.checked;
+    $('fx-bloom').value = on ? Math.max(30, parseInt($('fx-bloom').value, 10) || 0) : 0;
+    updatePostProcessing();
+  });
+  document.querySelectorAll('.mode-btn[data-cam]').forEach(function(btn) {
+    btn.addEventListener('click', function() { setCameraMode(btn.dataset.cam); });
+  });
+  $('cam-dwell').addEventListener('input', function() {
+    camState.tourDwellS = parseInt(this.value, 10) || 8;
+    $('cam-dwell-val').textContent = camState.tourDwellS + 's';
+  });
+  $('trail-length').addEventListener('input', function() {
+    setTrailLength(parseInt(this.value, 10));
   });
 
   document.querySelectorAll('[data-cctv-city]').forEach(function(btn) {
@@ -2407,17 +4093,10 @@ function setupEventListeners() {
   $('time-ff').addEventListener('click', function() { stepTime(1); });
   $('time-live').addEventListener('click', goLive);
   $('time-speed').addEventListener('change', function() {
-    timeState.speed = parseInt(this.value) || 60;
+    setClockSpeed(this.value);
   });
   $('time-slider').addEventListener('input', function() {
-    if (timeState.windowStart) {
-      var offsetSec = parseInt(this.value) || 0;
-      var newEpoch = new Date(timeState.windowStart.getTime() + offsetSec * 1000);
-      timeState.live = false;
-      timeState.epoch = newEpoch;
-      updateTimeDisplay();
-      fetchSatellitesAtEpoch();
-    }
+    scrubTo(parseInt(this.value, 10) || 0);
   });
 
   // Conjunction detail + Risk matrix
@@ -2440,22 +4119,47 @@ function setupEventListeners() {
     }
   });
 
-  document.querySelectorAll('.panel h3').forEach(function(h3) {
-    h3.addEventListener('click', function(e) {
-      if (e.target.tagName === 'INPUT') return;
-      this.parentElement.classList.toggle('collapsed');
-    });
+  document.querySelectorAll('.panel h3').forEach(wirePanelCollapse);
+
+  // Catalog group, contacts roster and share link
+  $('cat-group').addEventListener('change', function() { switchCatalogGroup(this.value); });
+  $('btn-copy-link').addEventListener('click', copyShareLink);
+  $('btn-pin').addEventListener('click', function() { togglePin(satEngine.selectedId); });
+  $('roster-list').addEventListener('click', function(e) {
+    var drop = e.target.closest('[data-unpin]');
+    if (drop) {
+      e.stopPropagation();
+      togglePin(parseInt(drop.dataset.unpin, 10));
+      return;
+    }
+    var row = e.target.closest('[data-norad]');
+    if (row) flyToContact(parseInt(row.dataset.norad, 10));
   });
 
   // ===== KEYBOARD SHORTCUTS =====
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // Ctrl+Shift+I, Ctrl+R and the like belong to the browser.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
 
     switch(e.key) {
       case '1': setViewMode('normal'); break;
       case '2': setViewMode('crt'); break;
       case '3': setViewMode('nvg'); break;
       case '4': setViewMode('flir'); break;
+      case '5': setViewMode('noir'); break;
+      case '6': setViewMode('snow'); break;
+      case '7': setCameraMode(camState.mode === 'chase' ? 'free' : 'chase'); break;
+      case '8': setCameraMode(camState.mode === 'cockpit' ? 'free' : 'cockpit'); break;
+      case '9': setCameraMode(camState.mode === 'orbit' ? 'free' : 'orbit'); break;
+      case '0': setCameraMode(camState.mode === 'tour' ? 'free' : 'tour'); break;
+      case 'h': case 'H': setThermalPolarity(!$('fx-hotpolarity').checked); break;
+      case 'a': case 'A':
+        toggleLayer('trails', !layerState.trails); break;
+      case 'x': case 'X':
+        toggleLayer('declutter', !layerState.declutter); break;
+      case 'e': case 'E':
+        toggleLayer('sensors', !layerState.sensors); break;
 
       case 's': case 'S':
         $('layer-satellites').checked = !$('layer-satellites').checked;
@@ -2478,11 +4182,24 @@ function setupEventListeners() {
       case 'j': case 'J':
         $('layer-conjunctions').checked = !$('layer-conjunctions').checked;
         toggleLayer('conjunctions', $('layer-conjunctions').checked); break;
+      case 'v': case 'V':
+        $('layer-covariance').checked = !$('layer-covariance').checked;
+        toggleLayer('covariance', $('layer-covariance').checked); break;
       case 'c': case 'C':
         $('layer-cctv').checked = !$('layer-cctv').checked;
         toggleLayer('cctv', $('layer-cctv').checked); break;
       case ' ':
         e.preventDefault(); togglePlayPause(); break;
+      case 'k': case 'K': goLive(); break;
+      case ',': stepTime(-1); break;
+      case '.': stepTime(1); break;
+      case '[': stepSpeed(-1); break;
+      case ']': stepSpeed(1); break;
+
+      case 'r': case 'R': togglePin(satEngine.selectedId); break;
+      case 'n': case 'N': nextContact(); break;
+      case 'l': case 'L': copyShareLink(); break;
+      case 'w': case 'W': toggleServerTrack(); break;
 
       case 'd': case 'D':
         toggleDetection(detectionLevel === 'off' ? 'sparse' : (detectionLevel === 'sparse' ? 'full' : 'off'));
@@ -2497,11 +4214,20 @@ function setupEventListeners() {
         });
         break;
       case 'g': case 'G': flyToPreset('global'); break;
+      case 'i': case 'I': cycleBasemap(); break;
+      // preventDefault keeps the letter itself out of the box that takes focus.
+      case 'u': case 'U':
+        if (window.SDASatSearch) { e.preventDefault(); window.SDASatSearch.focus(); }
+        break;
+      case 'y': case 'Y':
+        if (window.SDAAgentPanel) { e.preventDefault(); window.SDAAgentPanel.focus(); }
+        break;
       case '/': e.preventDefault(); openSearch(); break;
       case '?': $('keyboard-help').classList.toggle('visible'); break;
 
       case 'Escape':
-        if ($('search-box').classList.contains('visible')) { closeSearch(); }
+        if (camState.mode !== 'free') { setCameraMode('free'); }
+        else if ($('search-box').classList.contains('visible')) { closeSearch(); }
         else if ($('keyboard-help').classList.contains('visible')) { $('keyboard-help').classList.remove('visible'); }
         else if ($('cctv-viewer').classList.contains('visible')) { $('cctv-viewer').classList.remove('visible'); }
         else { deselectEntity(); }
@@ -2523,6 +4249,7 @@ var REGIME_COLORS = {
 // ===== CONJUNCTION GLOBE LAYER =====
 var conjEntities = {};
 var conjEvents = [];
+var openConjunction = null; // the event shown in the detail panel, if any
 
 function renderConjunctionsOnGlobe(events) {
   for (var cid in conjEntities) { viewer.entities.remove(conjEntities[cid]); }
@@ -2531,9 +4258,11 @@ function renderConjunctionsOnGlobe(events) {
 
   if (!layerState.conjunctions || !events || events.length === 0) {
     $('count-conj').textContent = '0';
+    $('count-cov').textContent = '0';
     return;
   }
   $('count-conj').textContent = events.length;
+  var covCount = 0;
 
   for (var i = 0; i < events.length; i++) {
     var ev = events[i];
@@ -2609,91 +4338,231 @@ function renderConjunctionsOnGlobe(events) {
           }
         });
       }
+
+      if (layerState.covariance && ev.covariance) {
+        covCount += drawCovarianceEllipsoids(i, ev, riskColor);
+      }
     }
   }
+  $('count-cov').textContent = covCount;
   viewer.scene.requestRender();
 }
 
-// ===== TIME SLIDER / EPOCH CONTROL =====
+// 1-sigma and 3-sigma position-uncertainty shells at TCA. The shells are
+// spheres because the underlying model is isotropic: when the payload carries
+// no operator covariance the server falls back to sda.probability's TLE-age
+// sigma, which has no orientation, so drawing an oriented ellipsoid would
+// invent information. Labelled as an estimate for exactly that reason.
+function drawCovarianceEllipsoids(i, ev, riskColor) {
+  var cov = ev.covariance || {};
+  var isEstimate = cov.source === 'tle-age-estimate';
+  var pairs = [
+    { key: 'p', lon: ev.primary_lon, lat: ev.primary_lat, alt: ev.primary_alt_km,
+      sigma: cov.primary_sigma_km, name: ev.primary_name || String(ev.primary),
+      age: cov.primary_tle_age_hours },
+    { key: 's', lon: ev.secondary_lon, lat: ev.secondary_lat, alt: ev.secondary_alt_km,
+      sigma: cov.secondary_sigma_km, name: ev.secondary_name || String(ev.secondary),
+      age: cov.secondary_tle_age_hours }
+  ];
+  var shells = [
+    { n: 1, alpha: 0.16, outline: 0.55 },
+    { n: 3, alpha: 0.05, outline: 0.25 }
+  ];
+  var added = 0;
+  for (var k = 0; k < pairs.length; k++) {
+    var o = pairs[k];
+    if (o.lat === undefined || o.lon === undefined) continue;
+    var sigmaKm = Number(o.sigma);
+    if (!isFinite(sigmaKm) || sigmaKm <= 0) continue;
+    var pos = Cesium.Cartesian3.fromDegrees(o.lon, o.lat, (o.alt || 400) * 1000);
+    for (var q = 0; q < shells.length; q++) {
+      var r = sigmaKm * shells[q].n * 1000;
+      var eid = 'conj-cov-' + o.key + shells[q].n + '-' + i;
+      conjEntities[eid] = viewer.entities.add({
+        id: eid,
+        position: pos,
+        ellipsoid: {
+          radii: new Cesium.Cartesian3(r, r, r),
+          material: riskColor.withAlpha(shells[q].alpha),
+          outline: true, outlineColor: riskColor.withAlpha(shells[q].outline), outlineWidth: 1,
+        }
+      });
+      added++;
+    }
+    // The shells are only a few km across, so at global zoom they are
+    // sub-pixel; the numbers stay readable in the label either way.
+    var note = isEstimate ? 'TLE-AGE ESTIMATE' : String(cov.source || 'COVARIANCE');
+    var ageTxt = isFinite(Number(o.age)) ? ', AGE ' + Number(o.age).toFixed(1) + ' H' : '';
+    var lblId = 'conj-cov-lbl-' + o.key + '-' + i;
+    conjEntities[lblId] = viewer.entities.add({
+      id: lblId,
+      position: pos,
+      label: {
+        text: '1 SIGMA ' + sigmaKm.toFixed(3) + ' km / 3 SIGMA ' + (sigmaKm * 3).toFixed(3) + ' km\n' + note + ageTxt,
+        font: '9px JetBrains Mono',
+        fillColor: riskColor.withAlpha(0.9),
+        outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(14, 28),
+        showBackground: true, backgroundColor: Cesium.Color.BLACK.withAlpha(0.7),
+        scaleByDistance: new Cesium.NearFarScalar(5e5, 1.0, 2e7, 0.0),
+      }
+    });
+  }
+  return added;
+}
+
+// ===== TIME CONTROL (viewer.clock is the single source of truth) =====
+// Every propagator on the page reads simNow(), which reads
+// viewer.clock.currentTime, so the scrub slider, the speed multiplier and the
+// LIVE button move the satellites, the orbit ring, the ground track and the
+// conjunction timeline together instead of each keeping its own clock.
 var timeState = {
-  live: true, playing: false, epoch: new Date(), speed: 60,
-  lastTick: 0, windowHours: 24, windowStart: null, _lastFetch: 0,
+  live: true, playing: true, epoch: new Date(), speed: 1,
+  windowHours: 24, windowStart: null, _lastFetch: 0, _lastDisplay: 0,
 };
 
+var SPEED_STEPS = [1, 10, 60, 600, 3600]; // must match the #time-speed options
+
 function initTimeSlider() {
-  timeState.epoch = new Date();
+  timeState.epoch = simNow();
   timeState.windowStart = new Date(timeState.epoch.getTime() - 12 * 3600000);
   timeState.windowHours = 24;
+  timeState.playing = viewer.clock.shouldAnimate;
+  timeState.speed = viewer.clock.multiplier;
+  var playBtn = $('time-play');
+  playBtn.textContent = timeState.playing ? '\u23F8' : '\u25B6';
+  if (timeState.playing) playBtn.classList.add('active');
+  viewer.clock.onTick.addEventListener(onClockTick);
   updateTimeDisplay();
 }
 
-function updateTimeDisplay() {
-  var dt = timeState.epoch;
-  $('time-display').textContent = dt.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  if (timeState.windowStart) {
-    var elapsed = (dt.getTime() - timeState.windowStart.getTime()) / 1000;
-    var total = timeState.windowHours * 3600;
-    $('time-slider').max = total;
-    $('time-slider').value = Math.max(0, Math.min(total, elapsed));
+// Push a wall-clock instant into the Cesium clock.
+function setClockDate(dt) {
+  viewer.clock.currentTime = Cesium.JulianDate.fromDate(dt);
+  timeState.epoch = dt;
+}
+
+function onClockTick(clock) {
+  if (timeState.live) {
+    // Live mode pins the simulation to real time; Cesium would otherwise drift
+    // by the render-loop delta whenever a frame is slow.
+    clock.currentTime = Cesium.JulianDate.now();
   }
+  timeState.epoch = Cesium.JulianDate.toDate(clock.currentTime);
+  var nowMs = performance.now();
+  if (nowMs - timeState._lastDisplay > 200) {
+    timeState._lastDisplay = nowMs;
+    updateTimeDisplay();
+  }
+  if (!satEngine.active && !timeState.live && nowMs - timeState._lastFetch > 750) {
+    timeState._lastFetch = nowMs;
+    fetchSatellitesAtEpoch();
+  }
+}
+
+function speedLabel() {
+  var m = viewer && viewer.clock ? viewer.clock.multiplier : 1;
+  return (m >= 1 ? Math.round(m) : m) + 'x';
+}
+
+function updateTimeDisplay() {
+  var dt = timeState.epoch || new Date();
+  $('time-display').textContent = dt.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  var total = timeState.windowHours * 3600;
+  if (!timeState.windowStart) {
+    timeState.windowStart = new Date(dt.getTime() - (total / 2) * 1000);
+  }
+  var elapsed = (dt.getTime() - timeState.windowStart.getTime()) / 1000;
+  if (elapsed < 0 || elapsed > total) {
+    // Recentre the scrub window instead of letting the thumb stick at an end.
+    timeState.windowStart = new Date(dt.getTime() - (total / 2) * 1000);
+    elapsed = total / 2;
+  }
+  var slider = $('time-slider');
+  slider.max = total;
+  slider.value = Math.round(elapsed);
   var badge = $('time-live');
   if (timeState.live) {
     badge.classList.remove('inactive');
     badge.textContent = 'LIVE';
   } else {
     badge.classList.add('inactive');
-    badge.textContent = 'HIST';
+    badge.textContent = timeState.playing ? 'SIM ' + speedLabel() : 'HOLD';
   }
 }
 
 function goLive() {
   timeState.live = true;
-  timeState.playing = false;
-  timeState.epoch = new Date();
+  timeState.playing = true;
+  timeState.speed = 1;
+  viewer.clock.multiplier = 1;
+  viewer.clock.shouldAnimate = true;
+  setClockDate(new Date());
+  timeState.windowStart = new Date(timeState.epoch.getTime() - 12 * 3600000);
+  var sel = $('time-speed');
+  if (sel) sel.value = '1';
   var playBtn = $('time-play');
-  playBtn.textContent = '\u25B6';
-  playBtn.classList.remove('active');
+  playBtn.textContent = '\u23F8';
+  playBtn.classList.add('active');
   updateTimeDisplay();
   if (!satEngine.active) loadSatellites();
+  addIntelItem('Clock returned to live');
 }
 
 function togglePlayPause() {
   var playBtn = $('time-play');
-  if (timeState.playing) {
+  if (viewer.clock.shouldAnimate) {
+    viewer.clock.shouldAnimate = false;
     timeState.playing = false;
+    timeState.live = false;
     playBtn.textContent = '\u25B6';
     playBtn.classList.remove('active');
   } else {
+    viewer.clock.shouldAnimate = true;
     timeState.playing = true;
-    timeState.live = false;
     playBtn.textContent = '\u23F8';
     playBtn.classList.add('active');
-    timeState.lastTick = performance.now();
-    tickTime();
   }
+  updateTimeDisplay();
 }
 
-function tickTime() {
-  if (!timeState.playing) return;
-  var now = performance.now();
-  var dt = (now - timeState.lastTick) / 1000;
-  timeState.lastTick = now;
-  timeState.epoch = new Date(timeState.epoch.getTime() + dt * timeState.speed * 1000);
+function setClockSpeed(mult) {
+  var m = parseFloat(mult);
+  if (!isFinite(m) || m <= 0) m = 1;
+  timeState.speed = m;
+  viewer.clock.multiplier = m;
+  if (m !== 1) timeState.live = false;
+  var sel = $('time-speed');
+  if (sel) sel.value = String(m);
   updateTimeDisplay();
-  // Client-side engine reads timeState.epoch directly every frame;
-  // only the server-position fallback needs to fetch.
-  if (!satEngine.active && now - timeState._lastFetch > 500) {
-    timeState._lastFetch = now;
-    fetchSatellitesAtEpoch();
+}
+
+function stepSpeed(dir) {
+  var cur = viewer.clock.multiplier;
+  var idx = 0;
+  for (var i = 0; i < SPEED_STEPS.length; i++) {
+    if (Math.abs(SPEED_STEPS[i] - cur) < 1e-6) { idx = i; break; }
+    if (SPEED_STEPS[i] < cur) idx = i;
   }
-  requestAnimationFrame(tickTime);
+  idx = Math.max(0, Math.min(SPEED_STEPS.length - 1, idx + dir));
+  setClockSpeed(SPEED_STEPS[idx]);
+  addIntelItem('Clock speed ' + speedLabel());
 }
 
 function stepTime(hours) {
   timeState.live = false;
-  timeState.epoch = new Date(timeState.epoch.getTime() + hours * 3600000);
+  setClockDate(new Date(timeState.epoch.getTime() + hours * 3600000));
   updateTimeDisplay();
-  fetchSatellitesAtEpoch();
+  if (!satEngine.active) fetchSatellitesAtEpoch();
+}
+
+function scrubTo(offsetSec) {
+  if (!timeState.windowStart) return;
+  timeState.live = false;
+  setClockDate(new Date(timeState.windowStart.getTime() + offsetSec * 1000));
+  updateTimeDisplay();
+  if (!satEngine.active) fetchSatellitesAtEpoch();
 }
 
 async function fetchSatellitesAtEpoch() {
@@ -2712,8 +4581,9 @@ function getRegimeColor(sat) {
   if (sat.regime_color) return Cesium.Color.fromCssColorString(sat.regime_color);
   var alt = sat.alt_km || 0;
   if (alt < 2000) return Cesium.Color.fromCssColorString(REGIME_COLORS.LEO);
-  if (alt < 35786) return Cesium.Color.fromCssColorString(REGIME_COLORS.MEO);
-  if (alt < 35800) return Cesium.Color.fromCssColorString(REGIME_COLORS.GEO);
+  // Same bands as _classify_regime in routes/worldview.py: GEO is 35786 km, 300 km either side.
+  if (alt < 35486) return Cesium.Color.fromCssColorString(REGIME_COLORS.MEO);
+  if (alt <= 36086) return Cesium.Color.fromCssColorString(REGIME_COLORS.GEO);
   return Cesium.Color.fromCssColorString(REGIME_COLORS.HEO);
 }
 
@@ -2721,8 +4591,8 @@ function getRegimeName(sat) {
   if (sat.regime) return sat.regime;
   var alt = sat.alt_km || 0;
   if (alt < 2000) return 'LEO';
-  if (alt < 35786) return 'MEO';
-  if (alt < 35800) return 'GEO';
+  if (alt < 35486) return 'MEO';
+  if (alt <= 36086) return 'GEO';
   return 'HEO';
 }
 
@@ -2817,12 +4687,46 @@ function openConjunctionDetail(eventData) {
     box.appendChild(val);
     stats.appendChild(box);
   }
+  // The event on screen is the open one from here on, charts or no charts:
+  // a module acting on getConjunction() must never be handed the pair that
+  // was open before.
+  openConjunction = eventData;
   renderBPlaneChart(eventData);
   renderPcEvolutionChart(eventData);
+  document.dispatchEvent(new CustomEvent('sda:conjunction-open', { detail: eventData }));
+}
+
+function showChartMessage(elId, text) {
+  var el = $(elId);
+  if (!el) return;
+  if (window.Plotly) { try { Plotly.purge(el); } catch (e) { /* not a plot yet */ } }
+  el.replaceChildren();
+  var box = document.createElement('div');
+  box.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;' +
+    'padding:12px;text-align:center;font-size:10px;letter-spacing:1px;color:var(--hud-dim);';
+  box.textContent = text;
+  el.appendChild(box);
+}
+
+// The chart library comes from a CDN. When it has not arrived, or a draw
+// throws, the chart's box says so and the panel carries on.
+function drawChart(elId, traces, layout) {
+  var el = $(elId);
+  if (el) el.replaceChildren();
+  if (window.Plotly) {
+    try {
+      Plotly.newPlot(elId, traces, layout, { responsive: true, displayModeBar: false });
+      return;
+    } catch (e) { /* say so below */ }
+  }
+  showChartMessage(elId, 'CHART UNAVAILABLE. The chart library did not load; ' +
+    'the figures above are unaffected.');
 }
 
 function closeConjunctionDetail() {
   $('conj-detail').classList.remove('visible');
+  openConjunction = null;
+  document.dispatchEvent(new CustomEvent('sda:conjunction-close'));
 }
 
 function renderBPlaneChart(eventData) {
@@ -2839,7 +4743,7 @@ function renderBPlaneChart(eventData) {
     hbrX.push(bx + hbr * Math.cos(rad)); hbrY.push(by + hbr * Math.sin(rad));
   }
 
-  Plotly.newPlot('cd-bplane', [
+  drawChart('cd-bplane', [
     { x: e3x, y: e3y, mode: 'lines', name: '3\u03C3',
       line: { color: 'rgba(255,176,0,0.2)', width: 1, dash: 'dot' }, hoverinfo: 'skip' },
     { x: e1x, y: e1y, mode: 'lines', name: '1\u03C3',
@@ -2862,25 +4766,73 @@ function renderBPlaneChart(eventData) {
       zerolinecolor: 'rgba(255,176,0,0.15)' },
     legend: { font: { size: 8 }, bgcolor: 'rgba(0,0,0,0.5)', x: 0, y: 1 },
     margin: { l: 50, r: 10, t: 10, b: 40 },
-  }, { responsive: true, displayModeBar: false });
+  });
 }
 
-function renderPcEvolutionChart(eventData) {
-  var history = eventData.pc_history || [];
-  if (history.length === 0) {
-    var basePc = eventData.pc || 1e-6;
-    var hrs = [72, 48, 36, 24, 18, 12, 6, 3, 1, 0];
-    for (var i = 0; i < hrs.length; i++) {
-      var noise = 1 + (Math.random() - 0.5) * 0.8 * (hrs[i] / 72);
-      history.push({ hours_before_tca: hrs[i], pc: Math.max(1e-12, basePc * noise * (0.3 + 0.7 * Math.exp(-hrs[i] / 24))) });
-    }
-    history.sort(function(a, b) { return b.hours_before_tca - a.hours_before_tca; });
+// Pc trend. Every point on this chart is a Pc the server recomputed by
+// re-propagating both objects at that lead time. There is deliberately no
+// synthetic curve: an operator reading a probability trend must be able to
+// trust that the shape came from the propagator, so when the history endpoint
+// has nothing to say the chart says so instead of drawing something plausible.
+var pcTrendToken = 0;
+
+function showPcTrendMessage(text) {
+  showChartMessage('cd-pc-trend', text);
+}
+
+async function fetchPcHistory(eventData) {
+  var pid = eventData.primary_norad_id != null ? eventData.primary_norad_id : eventData.primary;
+  var sid = eventData.secondary_norad_id != null ? eventData.secondary_norad_id : eventData.secondary;
+  if (pid == null || sid == null || !eventData.tca) return [];
+  var qs = '?primary_norad_id=' + encodeURIComponent(pid) +
+    '&secondary_norad_id=' + encodeURIComponent(sid) +
+    '&tca=' + encodeURIComponent(eventData.tca) +
+    '&n_points=12';
+  try {
+    var resp = await fetch(API + '/api/conjunction-pc-history' + qs, { method: 'POST' });
+    if (!resp.ok) return [];
+    var data = await resp.json();
+    return Array.isArray(data.history) ? data.history : [];
+  } catch (e) {
+    return [];
   }
+}
+
+async function renderPcEvolutionChart(eventData) {
+  var token = ++pcTrendToken;
+  var history = Array.isArray(eventData.pc_history) ? eventData.pc_history.slice() : [];
+
+  if (!history.length) {
+    if (IS_STATIC) {
+      showPcTrendMessage('NO Pc HISTORY AVAILABLE. The static demo has no server to ' +
+        're-propagate this pair at earlier lead times.');
+      return;
+    }
+    showPcTrendMessage('LOADING Pc HISTORY...');
+    history = await fetchPcHistory(eventData);
+    if (token !== pcTrendToken) return; // a newer event was opened meanwhile
+  }
+
+  var returned = history.length;
+  // The trend is plotted on a log Pc axis, so a zero or non-finite Pc has
+  // nowhere to go. Say which of the two happened instead of drawing nothing.
+  history = history.filter(function(h) {
+    return h && isFinite(h.pc) && h.pc > 0 && isFinite(h.hours_before_tca);
+  });
+  if (!history.length) {
+    showPcTrendMessage(returned
+      ? 'Pc IS ZERO AT EVERY LEAD TIME FOR THIS PAIR (' + returned + ' SAMPLES). ' +
+        'NOTHING TO PLOT ON A LOG SCALE.'
+      : 'NO Pc HISTORY AVAILABLE for this pair.');
+    return;
+  }
+  history.sort(function(a, b) { return b.hours_before_tca - a.hours_before_tca; });
+  eventData.pc_history = history;
 
   var x = history.map(function(h) { return -h.hours_before_tca; });
   var y = history.map(function(h) { return h.pc; });
 
-  Plotly.newPlot('cd-pc-trend', [
+  drawChart('cd-pc-trend', [
     { x: x, y: y, mode: 'lines+markers', name: 'Pc',
       line: { color: '#ff8800', width: 2 }, marker: { color: '#ff8800', size: 5 } },
   ], {
@@ -2895,7 +4847,7 @@ function renderPcEvolutionChart(eventData) {
         line: { color: '#ffc800', width: 1, dash: 'dash' } },
     ],
     margin: { l: 55, r: 10, t: 10, b: 40 },
-  }, { responsive: true, displayModeBar: false });
+  });
 }
 
 // ===== TIMELINE STRIP =====
@@ -3016,10 +4968,34 @@ async function checkConfig() {
         );
         viewer.scene.primitives.add(g3dTiles);
         viewer.scene.globe.show = false; // tiles cover the full globe; avoid z-fighting
+        lockBasemap('Google Photorealistic 3D Tiles');
         addIntelItem('Google Photorealistic 3D Tiles loaded');
       } catch (e) { /* 3D tiles not available */ }
     }
   } catch (e) { /* no config endpoint */ }
+}
+
+// ===== PWA (static demo only) =====
+// The live FastAPI app must always serve fresh data, so nothing is cached
+// there. In the baked demo the shell and the bundled JSON never change between
+// deploys, which is exactly what a precache is for. PWA design follows satvis
+// (https://github.com/Flowm/satvis, MIT license).
+function registerDemoServiceWorker() {
+  if (!IS_STATIC) return;
+  var link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = 'static/manifest.webmanifest';
+  document.head.appendChild(link);
+  var meta = document.createElement('meta');
+  meta.name = 'theme-color';
+  meta.content = '#ffb000';
+  document.head.appendChild(meta);
+  if (!('serviceWorker' in navigator)) return;
+  // sw.js is copied to the demo root by scripts/build_static_demo.py, so its
+  // default scope already covers the whole demo with no extra header needed.
+  navigator.serviceWorker.register('sw.js').then(function() {
+    addIntelItem('Offline demo cache installed');
+  }, function() { /* file:// or an unsupported browser: the page still works */ });
 }
 
 // ===== MAIN INIT =====
@@ -3051,6 +5027,15 @@ async function init() {
 
     setLoadingProgress(90, 'STARTING DATA FEEDS...');
 
+    updateCatalogStatus();
+    updatePinButton();
+    renderRoster();
+    // The socket is a live-server feature; the static demo has no backend.
+    if (!IS_STATIC) connectServerTrack();
+    applyShareState();
+    initExtensions();
+    registerDemoServiceWorker();
+
     // Orbits and earthquakes load on-demand when user enables the layer
     // This matches how LeoLabs/keeptrack handle it: globe plus dots first, detail on interaction
 
@@ -3060,6 +5045,7 @@ async function init() {
     setInterval(function() { if (layerState.flights) loadFlights(); }, REFRESH_FLIGHTS_MS);
     setInterval(function() { if (layerState.military) loadMilitaryFlights(); }, REFRESH_MIL_MS);
     setInterval(function() { if (layerState.traffic) loadTraffic(); }, 10000);
+    setInterval(function() { if (layerState.sensors) refreshSensorCoverage(false); }, 15000);
     setInterval(updateClock, 1000);
     updateClock();
 
@@ -3077,8 +5063,8 @@ async function init() {
     viewer.scene.requestRender();
 
     setLoadingProgress(100, 'SYSTEMS ONLINE');
-    addIntelItem('WorldView v2.0 initialized \u2014 all systems operational');
-    addIntelItem('Keys: 1-4 modes, S/F/M/Q/J layers, SPACE play/pause, D detect, / search, ? help');
+    addIntelItem('WorldView v2.0 initialized, all systems operational');
+    addIntelItem('Keys: 1-6 styles, 7-0 camera, S/F/M/Q/J/V/E layers, A trails, X declutter, ? help');
     setTimeout(hideLoading, 600);
   } catch (e) {
     setLoadingProgress(0, 'INIT FAILED: ' + e.message);
