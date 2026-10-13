@@ -6,7 +6,7 @@ import math
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
-from sgp4.api import WGS72, Satrec, jday
+from sgp4.api import WGS72, Satrec, SatrecArray, jday
 
 from sda.models import StateVector, TLERecord
 
@@ -103,6 +103,57 @@ def propagate_window_numpy(
     # times and valid both have n_steps entries by construction
     valid_times = [t for t, v in zip(times, valid, strict=True) if v]
     return positions[valid], velocities[valid], valid_times
+
+
+def time_grid(
+    start: datetime,
+    hours: float = 24.0,
+    step_seconds: float = 60.0,
+) -> tuple[list[datetime], np.ndarray, np.ndarray]:
+    """Shared coarse time grid: (times, jd array, fr array).
+
+    Julian dates stay split into the (jd, fr) pair SGP4 expects; they are never
+    combined into a single float.
+    """
+    n_steps = int((hours * 3600) / step_seconds) + 1
+    times = [start + timedelta(seconds=i * step_seconds) for i in range(n_steps)]
+    jds = np.zeros(n_steps)
+    frs = np.zeros(n_steps)
+    for i, dt in enumerate(times):
+        jd, fr = datetime_to_jd(dt)
+        jds[i] = jd
+        frs[i] = fr
+    return times, jds, frs
+
+
+def propagate_catalog_numpy(
+    tles: list[TLERecord],
+    start: datetime,
+    hours: float = 24.0,
+    step_seconds: float = 60.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[datetime]]:
+    """Propagate a whole catalog on one shared time grid, in one SGP4 call.
+
+    Uses ``sgp4.api.SatrecArray`` so every object is propagated at C level over
+    the same (jd, fr) grid. Unlike ``propagate_window_numpy`` the returned arrays
+    are *aligned*: index ``t`` means the same instant for every object, and
+    per-object per-step failures are reported through the validity mask instead
+    of shortening the arrays.
+
+    Returns (positions, velocities, valid, times) with
+    positions/velocities shaped (n_objects, n_steps, 3) in km and km/s (ECI,
+    TEME as produced by SGP4 under WGS72), valid shaped (n_objects, n_steps).
+    """
+    times, jds, frs = time_grid(start, hours, step_seconds)
+    n_steps = len(times)
+    if not tles:
+        empty = np.zeros((0, n_steps, 3))
+        return empty, empty.copy(), np.zeros((0, n_steps), dtype=bool), times
+
+    satrecs = [build_satrec(tle) for tle in tles]
+    errors, positions, velocities = SatrecArray(satrecs).sgp4(jds, frs)
+    valid = (errors == 0) & np.all(np.isfinite(positions), axis=2)
+    return positions, velocities, valid, times
 
 
 def compute_distance(pos1: tuple[float, ...], pos2: tuple[float, ...]) -> float:

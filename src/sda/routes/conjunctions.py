@@ -8,8 +8,26 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from sda.cdm import compute_pc_from_cdm, generate_cdm_batch, parse_cdm
-from sda.conjunction import clear_conjunction_history, find_conjunctions, get_conjunction_history
-from sda.models import CDMIngestRequest, CDMIngestResult, ConjunctionEvent, ConjunctionRequest
+from sda.conjunction import (
+    clear_conjunction_history,
+    find_conjunctions,
+    get_conjunction_history,
+    screen_regime,
+)
+from sda.models import (
+    CDMIngestRequest,
+    CDMIngestResult,
+    ConjunctionEvent,
+    ConjunctionRequest,
+    RegimeSurveyRequest,
+    RegimeSurveyResult,
+)
+from sda.screening import (
+    BUNDLED_FORMATION_RULES,
+    FORMATION_HEURISTIC_LIMITS,
+    REGIME_DEFAULT_THRESHOLD_KM,
+    formation_rule_to_dict,
+)
 from sda.visualization import render_html
 
 router = APIRouter()
@@ -23,16 +41,27 @@ router = APIRouter()
     response_description="Conjunction events sorted by risk, each with Pc estimate",
 )
 def run_conjunctions(request: ConjunctionRequest):
-    """Execute the two-phase conjunction detection pipeline."""
+    """Execute the two-phase conjunction detection pipeline.
+
+    ``method`` selects the coarse screening strategy ("auto", "allpairs" or
+    "spatial"); all three return the same events. ``include_formations`` set to
+    false drops events flagged as known co-orbiting formations.
+    """
     from sda.api import _metrics, store
 
     t0 = time.monotonic()
-    events = find_conjunctions(
-        store=store,
-        norad_ids=request.norad_ids,
-        hours=request.hours,
-        threshold_km=request.threshold_km,
-    )
+    try:
+        events = find_conjunctions(
+            store=store,
+            norad_ids=request.norad_ids,
+            hours=request.hours,
+            threshold_km=request.threshold_km,
+            method=request.method,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not request.include_formations:
+        events = [e for e in events if not e.formation_excluded]
     elapsed_ms = (time.monotonic() - t0) * 1000
     _metrics["conjunctions_run"] += 1
     _metrics["conjunctions_found"] += len(events)
@@ -59,6 +88,61 @@ def clear_history():
     """Clears all stored conjunction history."""
     count = clear_conjunction_history()
     return {"status": "cleared", "events_removed": count}
+
+
+@router.post(
+    "/conjunctions/survey",
+    response_model=RegimeSurveyResult,
+    tags=["Conjunctions"],
+    summary="All-vs-all conjunction survey restricted to one orbit regime",
+    response_description="Events ranked by closest approach, plus the parameters used",
+)
+def survey_regime(request: RegimeSurveyRequest):
+    """Screen only the objects in one regime (LEO, MEO, GEO or HEO).
+
+    The coarse threshold defaults per regime (GEO widest) unless overridden.
+    Events are ranked by ascending miss distance and truncated to ``limit``.
+    """
+    from sda.api import _metrics, store
+
+    t0 = time.monotonic()
+    try:
+        result = screen_regime(
+            store=store,
+            regime=request.regime,
+            hours=request.hours,
+            threshold_km=request.threshold_km,
+            method=request.method,
+            include_formations=request.include_formations,
+            limit=request.limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _metrics["conjunctions_run"] += 1
+    _metrics["conjunctions_found"] += len(result.events)
+    _metrics["last_analysis_duration_ms"] = round((time.monotonic() - t0) * 1000, 2)
+    return result
+
+
+@router.get(
+    "/conjunctions/exclusions",
+    tags=["Conjunctions"],
+    summary="Bundled formation and co-orbiting exclusion table",
+    response_description="Formation rules, their heuristic limits, and per-regime thresholds",
+)
+def formation_exclusions():
+    """The co-orbiting sets that flag a conjunction as an expected formation pair.
+
+    Matching events are flagged ``formation_excluded`` and kept in the output;
+    POST /conjunctions and POST /conjunctions/survey drop them only when
+    ``include_formations`` is false.
+    """
+    return {
+        "rules": [formation_rule_to_dict(r) for r in BUNDLED_FORMATION_RULES],
+        "count": len(BUNDLED_FORMATION_RULES),
+        "heuristic_limits": list(FORMATION_HEURISTIC_LIMITS),
+        "regime_default_threshold_km": dict(REGIME_DEFAULT_THRESHOLD_KM),
+    }
 
 
 @router.get(
@@ -94,7 +178,10 @@ def generate_cdms(request: ConjunctionRequest):
         norad_ids=request.norad_ids,
         hours=request.hours,
         threshold_km=request.threshold_km,
+        method=request.method,
     )
+    if not request.include_formations:
+        events = [e for e in events if not e.formation_excluded]
     tle_lookup = {t.norad_id: t for t in store.get_all()}
     pc_lookup = {}
     for e in events:

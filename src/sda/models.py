@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from sda.screening import classify_regime_from_line2
+
+ScreeningMethod = Literal["auto", "allpairs", "spatial"]
+OrbitRegime = Literal["LEO", "MEO", "GEO", "HEO", "OTHER"]
 
 
 class RiskLevel(enum.StrEnum):
@@ -62,12 +68,52 @@ class ConjunctionEvent(BaseModel):
     relative_velocity_km_s: float
     risk: RiskLevel
     collision_probability: CollisionProbability | None = None
+    # Screening metadata. All optional with defaults so existing payloads and
+    # existing callers keep working unchanged.
+    risk_score: float | None = None       # composite 0-100 score (sda.screening)
+    formation_excluded: bool = False      # known co-orbiting set, kept not dropped
+    formation_label: str | None = None    # which formation rule matched
+    screening_method: str | None = None   # "allpairs" or "spatial"
+    regime: str | None = None             # shared orbit regime, or "MIXED"
 
 
 class ConjunctionRequest(BaseModel):
     norad_ids: list[int] | None = None
     hours: float = Field(default=24.0, gt=0, le=168.0)
     threshold_km: float = Field(default=10.0, gt=0, le=200.0)
+    method: ScreeningMethod = Field(
+        default="auto",
+        description="Coarse screening strategy: auto, allpairs or spatial",
+    )
+    include_formations: bool = Field(
+        default=True,
+        description="Keep events flagged as known co-orbiting formations",
+    )
+
+
+class RegimeSurveyRequest(BaseModel):
+    """All-vs-all survey restricted to one orbit regime."""
+
+    regime: OrbitRegime = "LEO"
+    hours: float = Field(default=24.0, gt=0, le=168.0)
+    threshold_km: float | None = Field(
+        default=None, gt=0, le=200.0,
+        description="Overrides the per-regime default coarse threshold",
+    )
+    method: ScreeningMethod = "auto"
+    include_formations: bool = True
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
+class RegimeSurveyResult(BaseModel):
+    """Ranked survey output plus the parameters actually used."""
+
+    regime: str
+    threshold_km: float
+    hours: float
+    objects_screened: int
+    screening_method: str
+    events: list[ConjunctionEvent]
 
 
 class ManeuverRequest(BaseModel):
@@ -185,6 +231,7 @@ class SatelliteSummary(BaseModel):
     norad_id: int
     name: str
     epoch: datetime
+    regime: str | None = None
 
 
 class TLEFreshness(BaseModel):
@@ -205,3 +252,11 @@ class SatelliteDetail(BaseModel):
     epoch: datetime
     current_state: StateVector | None = None
     freshness: TLEFreshness | None = None
+    regime: str | None = None
+
+    @model_validator(mode="after")
+    def fill_regime(self) -> SatelliteDetail:
+        """Derive the orbit regime from the TLE mean elements when not supplied."""
+        if self.regime is None:
+            self.regime = classify_regime_from_line2(self.line2)
+        return self

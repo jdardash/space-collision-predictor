@@ -5,6 +5,18 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      # Bind all interfaces inside the container so the published port works.
+      # Outside a container the app defaults to 127.0.0.1.
+      - SDA_HOST=0.0.0.0
+      - SDA_PORT=8000
+      # Browser origins allowed to call the API. Comma separated, no wildcard.
+      - SDA_CORS_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
+      # Per-IP token bucket on /api/ and /agent/. Set to "off" to disable.
+      - SDA_RATE_LIMIT=600/minute
+      # Space-Track and webhook credentials come from the environment only, never from disk:
+      # - SDA_SPACETRACK_USER=...
+      # - SDA_SPACETRACK_PASS=...
+      # - SDA_WEBHOOK_URLS=https://hooks.slack.com/services/...
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]

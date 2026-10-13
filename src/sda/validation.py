@@ -3,16 +3,20 @@
 Validates the Pc implementations against each other and against exact
 mathematics, using three computationally independent approaches:
 
-1. Closed form            — for zero miss and isotropic covariance,
+1. Closed form            - for zero miss and isotropic covariance,
                             Pc = 1 - exp(-R^2 / (2 sigma^2)) exactly.
-2. Chan analytic series   — exact for any isotropic encounter covariance
+2. Chan analytic series   - exact for any isotropic encounter covariance
                             (equivalent-area transform introduces no error
                             when sigma_x == sigma_y).
-3. Foster 2D quadrature   — direct numerical integration; validated against
+3. Foster 2D quadrature   - direct numerical integration; validated against
                             the series where the series is exact, and against
                             a self-convergence (high-resolution) reference in
                             the anisotropic regime.
-4. Monte Carlo sampling   — method-independent stochastic ground truth,
+4. Alfano strip series    - one-dimensional erf-strip quadrature, exact for
+                            any encounter covariance including anisotropic
+                            ones, and computationally independent of both the
+                            Foster polar grid and the Chan series.
+5. Monte Carlo sampling   - method-independent stochastic ground truth,
                             checked to within 5 standard errors.
 
 The legacy isotropic implementation (compute_collision_probability) and the
@@ -36,6 +40,7 @@ import numpy as np
 from sda.probability import (
     compute_collision_probability,
     compute_collision_probability_full,
+    pc_alfano,
     pc_chan,
     pc_foster,
     pc_monte_carlo_2d,
@@ -43,6 +48,13 @@ from sda.probability import (
 
 # Pass thresholds (relative error unless stated otherwise)
 FOSTER_VS_REFERENCE_RTOL = 2e-3
+# Alfano is held to the same gate as Foster rather than a tighter one. Measured
+# error against these references is 3e-16 to 7e-8 (machine precision on the
+# isotropic cases, where the Chan series is exact), so the gate is five orders
+# of magnitude loose. It is not tightened because in the anisotropic cases the
+# reference is itself a finite-resolution Foster quadrature carrying ~1e-6
+# error: a tighter threshold would be testing the reference, not the method.
+ALFANO_VS_REFERENCE_RTOL = 2e-3
 LEGACY_VS_REFERENCE_RTOL = 5e-3
 PIPELINE_VS_REFERENCE_RTOL = 2e-3
 MC_SIGMA_BOUND = 5.0  # pass when |mc - ref| < 5 standard errors
@@ -132,6 +144,7 @@ def _evaluate_case(case: dict, mc_samples: int) -> dict:
 
     foster = pc_foster(miss, cov, hbr)
     chan = pc_chan(miss, cov, hbr)
+    alfano = pc_alfano(miss, cov, hbr)
 
     if case["isotropic"]:
         reference = chan  # series is exact here
@@ -153,6 +166,13 @@ def _evaluate_case(case: dict, mc_samples: int) -> dict:
         "rel_err": chan_err,
         "passed": chan_err < FOSTER_VS_REFERENCE_RTOL if case["isotropic"] else True,
         "informational": not case["isotropic"],
+    }
+
+    alfano_err = _rel_err(alfano, reference)
+    checks["alfano"] = {
+        "value": alfano,
+        "rel_err": alfano_err,
+        "passed": alfano_err < ALFANO_VS_REFERENCE_RTOL,
     }
 
     if case["isotropic"]:

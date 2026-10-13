@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from sda.models import SatelliteDetail, SatelliteSummary, TLEFreshness
 from sda.propagator import build_satrec, propagate_at
+from sda.screening import classify_regime_from_line2
 
 router = APIRouter()
 
@@ -27,7 +28,12 @@ def list_satellites():
     from sda.api import store
 
     return [
-        SatelliteSummary(norad_id=t.norad_id, name=t.name, epoch=t.epoch)
+        SatelliteSummary(
+            norad_id=t.norad_id,
+            name=t.name,
+            epoch=t.epoch,
+            regime=classify_regime_from_line2(t.line2),
+        )
         for t in store.get_all()
     ]
 
@@ -132,18 +138,27 @@ def tle_freshness():
     summary="Refresh TLEs from live CelesTrak sources",
 )
 async def refresh_tles():
-    """Re-fetch TLE data from all CelesTrak groups and update the catalog."""
-    from sda.api import _fetch_live_f107, _last_tle_refresh, _live_f107, _seed_catalog, store
+    """Re-fetch TLE data from the CelesTrak groups that are due and update the catalog.
 
-    before = store.count()
-    await _seed_catalog()
-    await _fetch_live_f107()
+    CelesTrak publishes new elements every two hours and refuses a repeat download
+    before then, so a group it answered for in the last two hours is left alone.
+    When that is every group the status is "waiting" and nothing was downloaded.
+    """
+    import sda.api as api
+
+    before = api.store.count()
+    groups_asked = await api._seed_catalog()
+    await api._fetch_live_f107()
+    # Read after the awaits: both names are rebound by the refresh, so a
+    # from-import taken before it would report the previous run.
+    refreshed_at = api._last_tle_refresh
     return {
-        "status": "refreshed",
+        "status": "waiting" if groups_asked == 0 else "refreshed",
+        "groups_asked": groups_asked,
         "satellites_before": before,
-        "satellites_after": store.count(),
-        "f107_solar_flux": _live_f107,
-        "timestamp": _last_tle_refresh.isoformat() if _last_tle_refresh else None,
+        "satellites_after": api.store.count(),
+        "f107_solar_flux": api._live_f107,
+        "timestamp": refreshed_at.isoformat() if refreshed_at else None,
     }
 
 
