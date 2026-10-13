@@ -9,6 +9,7 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -49,6 +51,16 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests with coverage
+        # The suite must not reach live upstreams. The app's startup task pulls
+        # the whole CelesTrak catalog into a store the tests share. When those
+        # replies landed mid-suite, the static demo tests screened thousands of
+        # objects pairwise instead of the 38 bundled ones, and the job ran for
+        # hours (7 of 15 test jobs on main, 2026-08-14 to 2026-10-13; two hit
+        # the 6-hour limit). Pointing HTTPS at a closed local port makes every
+        # upstream call fail at connect, so the app keeps its bundled catalog.
+        # The in-process test client has its own transport and ignores this.
+        env:
+          HTTPS_PROXY: http://127.0.0.1:9
         run: |
           pytest tests/ -x --tb=short --cov=src/sda --cov-report=xml --cov-report=term-missing
 
